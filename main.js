@@ -3,6 +3,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
+const { autoUpdater } = require('electron-updater');
 
 const HOST = '127.0.0.1';
 const PORT = 3080;
@@ -315,11 +316,55 @@ async function main() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.show();
   mainWindow.focus();
+  setupAutoUpdate();
 }
 
 function fatal(message) {
   dialog.showErrorBox('DeepSeek Harness', message);
   app.exit(1);
+}
+
+// ===== 自动更新（electron-updater + GitHub Releases，仓库公开可匿名下载）=====
+// 便携版不支持自更新（electron-updater 限制），出错一律静默不打扰。
+// DSH_UPDATER_TEST=1：开发模式测试钩子——伪装成旧版本走完整检查/下载流程
+function setupAutoUpdate() {
+  const testMode = !!process.env.DSH_UPDATER_TEST;
+  if (!app.isPackaged && !testMode) return;
+  if (testMode && !app.isPackaged) {
+    app.setVersion('0.1.6');
+    autoUpdater.forceDevUpdateConfig = true;
+  }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  const logUpd = (m) => console.log(`[updater] ${m}`);
+  autoUpdater.on('checking-for-update', () => logUpd('checking...'));
+  autoUpdater.on('update-available', (i) => logUpd(`available: ${i.version}`));
+  autoUpdater.on('update-not-available', () => logUpd('up to date'));
+  autoUpdater.on('download-progress', (p) => logUpd(`downloading ${p.percent.toFixed(1)}%`));
+  autoUpdater.on('update-downloaded', (i) => logUpd(`downloaded ${i.version}`));
+
+  autoUpdater.on('update-downloaded', async (info) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const r = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'DeepSeek Harness',
+      message: `新版本 ${info.version} 已就绪`,
+      detail: '重启应用后完成安装。',
+      buttons: ['立即重启', '稍后'],
+      defaultId: 0,
+    });
+    if (r.response === 0) {
+      quitting = true;
+      stopDshServer();
+      autoUpdater.quitAndInstall();
+    }
+  });
+  autoUpdater.on('error', () => {});
+
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  setTimeout(check, 15_000);
+  setInterval(check, 4 * 60 * 60 * 1000);
 }
 
 app.on('before-quit', () => {

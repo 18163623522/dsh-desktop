@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "DeepSeek Harness (dsh) 桌面端 — Electron 壳内嵌官方 dsh web 服务",
   "main": "main.js",
   "author": "dsh-desktop",
@@ -9,6 +9,9 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win portable nsis"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "^0.1.0-rc.6",
@@ -39,15 +42,24 @@
       }
     ],
     "npmRebuild": false,
+    "publish": {
+      "provider": "github",
+      "owner": "18163623522",
+      "repo": "dsh-desktop"
+    },
     "win": {
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "icon.png"
