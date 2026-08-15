@@ -1,0 +1,5 @@
+node_modules/
+app-deps/node_modules/
+dist/
+vendor/*.exe
+*.log
