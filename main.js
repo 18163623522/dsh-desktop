@@ -1,9 +1,16 @@
-const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
+
+// GUI 进程的 stdout 管道可能关闭（桌面启动场景），console 写入会 EPIPE 崩溃；
+// 更新器日志一律落盘，并放行良性的 EPIPE 未捕获异常
+process.on('uncaughtException', (err) => {
+  if (err?.code === 'EPIPE') return;
+  throw err;
+});
 
 const HOST = '127.0.0.1';
 const PORT = 3080;
@@ -259,6 +266,7 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
 
@@ -270,6 +278,34 @@ function createWindow() {
     }
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // 注入悬浮「检查更新」按钮（页面每次加载后重新注入）
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents
+      .executeJavaScript(`
+        (function () {
+          if (document.getElementById('dsh-upd-btn')) return;
+          var b = document.createElement('button');
+          b.id = 'dsh-upd-btn';
+          b.textContent = '\\u27f3 检查更新';
+          b.title = '检查 DeepSeek Harness 桌面端更新';
+          b.style.cssText = [
+            'position:fixed', 'right:12px', 'bottom:12px', 'z-index:2147483647',
+            'padding:4px 10px', 'font-size:12px', 'line-height:1.5',
+            'border:1px solid rgba(255,255,255,.18)', 'border-radius:8px',
+            'background:rgba(20,20,26,.72)', 'color:#e8e8ec',
+            'cursor:pointer', 'backdrop-filter:blur(6px)', 'opacity:.75',
+          ].join(';');
+          b.onmouseenter = function () { b.style.opacity = '1'; };
+          b.onmouseleave = function () { b.style.opacity = '.75'; };
+          b.onclick = function () {
+            if (window.dshDesktop && window.dshDesktop.checkUpdate) window.dshDesktop.checkUpdate();
+          };
+          (document.body || document.documentElement).appendChild(b);
+        })();
+      `)
+      .catch(() => {});
   });
 
   return mainWindow;
@@ -337,7 +373,15 @@ function setupAutoUpdate() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
-  const logUpd = (m) => console.log(`[updater] ${m}`);
+  const logUpd = (m) => {
+    try {
+      fs.appendFileSync(
+        path.join(app.getPath('userData'), 'updater.log'),
+        `[${new Date().toISOString()}] ${m}\n`
+      );
+    } catch {}
+  };
+  autoUpdater.logger = { info: logUpd, warn: logUpd, error: logUpd, debug: logUpd };
   autoUpdater.on('checking-for-update', () => logUpd('checking...'));
   autoUpdater.on('update-available', (i) => logUpd(`available: ${i.version}`));
   autoUpdater.on('update-not-available', () => logUpd('up to date'));
@@ -366,6 +410,39 @@ function setupAutoUpdate() {
   setTimeout(check, 15_000);
   setInterval(check, 4 * 60 * 60 * 1000);
 }
+
+// 悬浮按钮触发的手动检查（带结果反馈；发现新版走自动下载 → 既有重启弹窗）
+ipcMain.on('dsh-check-update', async () => {
+  if (!app.isPackaged) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'DeepSeek Harness',
+      message: '开发模式下不可用',
+      detail: '自动更新仅在安装版中生效。',
+    });
+    return;
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    const latest = result?.updateInfo?.version;
+    if (!latest || latest === app.getVersion()) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'DeepSeek Harness',
+        message: '已是最新版本',
+        detail: `当前版本 ${app.getVersion()}`,
+      });
+    }
+    // 有新版：autoDownload 已开启，下载完成后由 update-downloaded 弹窗接管
+  } catch (e) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'DeepSeek Harness',
+      message: '检查更新失败',
+      detail: String(e?.message ?? e),
+    });
+  }
+});
 
 app.on('before-quit', () => {
   quitting = true;
