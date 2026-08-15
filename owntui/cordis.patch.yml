@@ -1,0 +1,12 @@
+# dsh-owntui bundle patch —— 叠加在 dsh-base 核心层之上的自研终端前端。
+# base 已提供 llm-deepseek（凭据系统）、全套工具、会话持久化、agents 服务；
+# 我们只覆盖 persona 并插入前端行。
+- id: system-prompt
+  config:
+    persona: 'You are a coding agent. Reply in the user language.'
+
+- insert:
+    - id: owntui
+      name: 'dsh-owntui'
+      config:
+        provider: deepseek-official
