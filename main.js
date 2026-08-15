@@ -40,6 +40,119 @@ function dshLogPath() {
   return path.join(app.getPath('userData'), 'dsh-server.log');
 }
 
+// ===== 插件冲突自愈 =====
+// dsh 加载插件树时遇到重复条目 ID 会直接退出（duplicate loader entry id）。
+// 这里在启动失败时解析报错，自动停用声明该 ID 的社区插件（官方 bundle 不动），
+// 备份配置后重试，把"打不开"变成"自动恢复 + 告知"。
+const OFFICIAL_BUNDLES = new Set(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']);
+
+function profilePaths() {
+  const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web');
+  return {
+    pkg: path.join(profileDir, 'package.json'),
+    nodeModules: path.join(profileDir, 'node_modules'),
+    backup: path.join(profileDir, 'package.json.dsh-desktop-bak'),
+  };
+}
+
+function bundleDeclaredIds(nodeModules, bundle) {
+  const root = path.join(nodeModules, ...bundle.split('/'));
+  const ymls = [];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    if (pkg.dsh?.bundle?.patch) ymls.push(pkg.dsh.bundle.patch);
+  } catch { return new Set(); }
+  if (!ymls.length) {
+    for (const c of ['cordis.yml', 'cordis.patch.yml']) {
+      if (fs.existsSync(path.join(root, c))) ymls.push(c);
+    }
+  }
+  const ids = new Set();
+  for (const y of ymls) {
+    const f = path.join(root, y);
+    if (!fs.existsSync(f)) continue;
+    for (const m of fs.readFileSync(f, 'utf8').matchAll(/^\s*-\s*id:\s*(\S+)/gm)) {
+      ids.add(m[1]);
+    }
+  }
+  return ids;
+}
+
+// 在加载列表里找出声明了冲突 ID 的社区插件（取顺序靠后的，视为后来者/加害者）
+function findConflictingBundle(dupId) {
+  const { pkg: pkgPath, nodeModules } = profilePaths();
+  let bundles;
+  try {
+    bundles = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).dsh?.profile?.bundles;
+  } catch { return null; }
+  if (!Array.isArray(bundles)) return null;
+  let culprit = null;
+  for (const b of bundles) {
+    if (OFFICIAL_BUNDLES.has(b)) continue;
+    try {
+      if (bundleDeclaredIds(nodeModules, b).has(dupId)) culprit = b;
+    } catch {}
+  }
+  return culprit;
+}
+
+// 加载列表里最后一个社区插件（安全模式逐个排除时的候选）
+function lastCommunityBundle() {
+  const { pkg: pkgPath } = profilePaths();
+  try {
+    const bundles = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).dsh?.profile?.bundles;
+    if (!Array.isArray(bundles)) return null;
+    return [...bundles].reverse().find((b) => !OFFICIAL_BUNDLES.has(b)) ?? null;
+  } catch { return null; }
+}
+
+function disableBundle(bundleName, doBackup) {
+  const { pkg: pkgPath, backup } = profilePaths();
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((b) => b !== bundleName);
+  // 备份只在会话内第一次修改时做，保留用户完整原始配置
+  if (doBackup) fs.copyFileSync(pkgPath, backup);
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+}
+
+async function startDshWithSelfHeal() {
+  const healed = [];
+  let backedUp = false;
+  const dbg = (msg) => { try { fs.appendFileSync(path.join(app.getPath('userData'), 'heal-debug.log'), `[${new Date().toISOString()}] ${msg}\n`); } catch {} };
+  for (let attempt = 0; attempt < 10; attempt++) {
+    dshExitInfo = null;
+    startDshServer();
+    if (await waitForServer()) { dbg(`attempt ${attempt}: server ready`); return healed; }
+    dbg(`attempt ${attempt}: failed, exitInfo=${JSON.stringify(dshExitInfo)}`);
+    // exit 事件可能先于最后的 stderr 落盘（Windows 管道竞态），读日志前稍等
+    await new Promise((r) => setTimeout(r, 1500));
+    let log = '';
+    try { log = fs.readFileSync(dshLogPath(), 'utf8'); } catch (e) { dbg(`read log fail: ${e.message}`); }
+    dbg(`attempt ${attempt}: log ${log.length} chars, hasTreeFail=${log.includes('plugin tree failed to load')}`);
+    if (!log.includes('plugin tree failed to load')) { dbg('give up: not a plugin tree failure'); return null; }
+    const dup = log.match(/duplicate loader entry id: (\S+)/);
+    let culprit = null;
+    let reason = '';
+    if (dup) {
+      culprit = findConflictingBundle(dup[1]);
+      reason = `冲突条目 ${dup[1]}`;
+    } else {
+      culprit = lastCommunityBundle();
+      reason = '插件树加载失败（安全模式排除）';
+    }
+    dbg(`attempt ${attempt}: culprit=${culprit} reason=${reason}`);
+    if (!culprit) { dbg('give up: no culprit'); return null; }
+    try {
+      disableBundle(culprit, !backedUp);
+    } catch (e) { dbg(`disableBundle threw: ${e.message}`); return null; }
+    backedUp = true;
+    healed.push({ bundle: culprit, reason });
+    dbg(`attempt ${attempt}: disabled ${culprit}, retrying`);
+  }
+  dbg('exhausted attempts');
+  return null;
+}
+
 function startDshServer() {
   const entry = resolveDshEntry();
   if (!fs.existsSync(entry)) {
@@ -115,10 +228,18 @@ function checkServer() {
 
 async function waitForServer() {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+  let consecutive = 0;
   while (Date.now() < deadline) {
-    if (await checkServer()) return true;
-    if (dshExitInfo) return false;
-    await new Promise((r) => setTimeout(r, 500));
+    if (await checkServer()) {
+      consecutive++;
+      // 端口会先于插件树加载而短暂打开（加载失败随即退出），需连续确认稳定
+      if (consecutive >= 3 && !dshExitInfo) return true;
+      await new Promise((r) => setTimeout(r, 1000));
+    } else {
+      consecutive = 0;
+      if (dshExitInfo) return false;
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
   return false;
 }
@@ -159,15 +280,23 @@ async function main() {
 
   // 端口已被占用时（例如已有一个 dsh 实例），直接复用现有服务
   if (!(await checkServer())) {
-    startDshServer();
-  }
-
-  const ok = await waitForServer();
-  if (!ok) {
-    const detail = dshExitInfo
-      ? `dsh 服务进程异常退出（code=${dshExitInfo.code} signal=${dshExitInfo.signal}）。`
-      : `等待 ${STARTUP_TIMEOUT_MS / 1000} 秒后服务仍未就绪。`;
-    fatal(`DeepSeek Harness 启动失败。\n\n${detail}\n\n日志文件：${dshLogPath()}`);
+    const healed = await startDshWithSelfHeal();
+    if (!healed) {
+      const detail = dshExitInfo
+        ? `dsh 服务进程异常退出（code=${dshExitInfo.code} signal=${dshExitInfo.signal}）。`
+        : `等待 ${STARTUP_TIMEOUT_MS / 1000} 秒后服务仍未就绪。`;
+      fatal(`DeepSeek Harness 启动失败。\n\n${detail}\n\n日志文件：${dshLogPath()}`);
+    }
+    if (healed.length) {
+      const list = healed.map((h) => `• ${h.bundle}（${h.reason}）`).join('\n');
+      dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'DeepSeek Harness',
+        message: '已自动停用导致启动失败的插件',
+        detail: `以下插件导致 dsh 插件树加载失败，已从加载列表停用（包未卸载）：\n\n${list}\n\n原配置备份于：${profilePaths().backup}`,
+        buttons: ['好的'],
+      });
+    }
   }
 
   if (!mainWindow || mainWindow.isDestroyed()) return;
