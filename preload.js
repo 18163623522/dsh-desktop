@@ -6,6 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('dshDesktop', {
   checkUpdate: () => ipcRenderer.send('dsh-check-update'),
   openTui: () => ipcRenderer.send('dsh-open-tui'),
+  restartUpdate: () => ipcRenderer.send('dsh-restart-update'),
 });
 
 contextBridge.exposeInMainWorld('dshGui', {

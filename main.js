@@ -21,6 +21,7 @@ let dshProcess = null;
 let dshExitInfo = null;
 let mainWindow = null;
 let quitting = false;
+let pendingUpdateVersion = null;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -455,33 +456,83 @@ function fatal(message) {
   app.exit(1);
 }
 
-// ===== 更新通知横幅（发现新版本时在页面顶部提示，下载完成后由重启弹窗接管）=====
-function showUpdateBanner(text) {
+// ===== 更新通知 UI（发现新版本进度卡片 + 下载完成后的就绪弹窗）=====
+const UPD_ACCENT = '#4d7fff';
+
+function injectUpdateCss() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const msg = JSON.stringify(String(text ?? ''));
   mainWindow.webContents.executeJavaScript(`
     (function () {
-      var b = document.getElementById('dsh-upd-banner');
+      if (document.getElementById('dsh-upd-css')) return;
+      var s = document.createElement('style');
+      s.id = 'dsh-upd-css';
+      s.textContent = [
+        '.dsh-upd-card{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483647;display:flex;align-items:center;gap:12px;min-width:300px;max-width:86vw;padding:12px 16px;border-radius:14px;background:rgba(22,22,30,.94);border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 30px rgba(0,0,0,.45);backdrop-filter:blur(10px);color:#e8e8ec;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}',
+        '.dsh-upd-spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.18);border-top-color:${UPD_ACCENT};animation:dsh-upd-spin .8s linear infinite;flex:none;}',
+        '@keyframes dsh-upd-spin{to{transform:rotate(360deg)}}',
+        '.dsh-upd-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}',
+        '.dsh-upd-title{font-size:13px;font-weight:600;}',
+        '.dsh-upd-sub{font-size:12px;opacity:.7;}',
+        '.dsh-upd-bar{height:4px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;}',
+        '.dsh-upd-fill{height:100%;border-radius:2px;background:${UPD_ACCENT};transition:width .3s ease;}',
+        '.dsh-upd-x{cursor:pointer;opacity:.5;font-size:16px;line-height:1;flex:none;padding:0 2px;}',
+        '.dsh-upd-x:hover{opacity:1;}',
+        '.dsh-upd-overlay{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;background:rgba(8,8,12,.55);backdrop-filter:blur(4px);}',
+        '.dsh-upd-modal{width:320px;max-width:88vw;padding:22px;border-radius:16px;text-align:center;background:rgba(22,22,30,.96);border:1px solid rgba(255,255,255,.12);box-shadow:0 16px 48px rgba(0,0,0,.55);color:#e8e8ec;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}',
+        '.dsh-upd-ico{width:42px;height:42px;margin:0 auto 12px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(77,127,255,.16);color:${UPD_ACCENT};font-size:20px;}',
+        '.dsh-upd-modal-title{font-size:16px;font-weight:700;margin-bottom:6px;}',
+        '.dsh-upd-modal-ver{font-size:13px;opacity:.75;margin-bottom:4px;}',
+        '.dsh-upd-modal-desc{font-size:12px;opacity:.55;margin-bottom:18px;}',
+        '.dsh-upd-btn{display:inline-block;padding:8px 18px;border-radius:9px;font-size:13px;cursor:pointer;border:1px solid transparent;transition:opacity .15s;}',
+        '.dsh-upd-btn:hover{opacity:.85;}',
+        '.dsh-upd-btn-primary{background:${UPD_ACCENT};color:#fff;}',
+        '.dsh-upd-btn-ghost{background:transparent;border-color:rgba(255,255,255,.18);color:#e8e8ec;margin-left:10px;}'
+      ].join('');
+      (document.head || document.documentElement).appendChild(s);
+    })();
+  `).catch(() => {});
+}
+
+function showUpdateProgress(version, percent) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  injectUpdateCss();
+  const v = JSON.stringify(String(version ?? ''));
+  const pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  mainWindow.webContents.executeJavaScript(`
+    (function () {
+      var b = document.getElementById('dsh-upd-card');
       if (!b) {
         b = document.createElement('div');
-        b.id = 'dsh-upd-banner';
-        b.style.cssText = [
-          'position:fixed', 'top:12px', 'left:50%', 'transform:translateX(-50%)', 'z-index:2147483647',
-          'padding:8px 14px', 'font-size:13px', 'line-height:1.5',
-          'border:1px solid rgba(255,255,255,.18)', 'border-radius:10px',
-          'background:rgba(20,20,26,.85)', 'color:#e8e8ec',
-          'box-shadow:0 4px 16px rgba(0,0,0,.4)', 'backdrop-filter:blur(8px)',
-          'display:flex', 'align-items:center', 'gap:10px', 'max-width:80vw'
-        ].join(';');
+        b.id = 'dsh-upd-card';
+        b.className = 'dsh-upd-card';
+        b.innerHTML = '<div class="dsh-upd-spinner"></div><div class="dsh-upd-body"><div class="dsh-upd-title"></div><div class="dsh-upd-sub"></div><div class="dsh-upd-bar"><div class="dsh-upd-fill"></div></div></div><span class="dsh-upd-x">\\u00d7</span>';
+        b.querySelector('.dsh-upd-x').onclick = function () { b.remove(); };
         (document.body || document.documentElement).appendChild(b);
       }
-      b.textContent = '';
-      b.appendChild(document.createTextNode(${msg}));
-      var x = document.createElement('span');
-      x.textContent = '\\u00d7';
-      x.style.cssText = 'cursor:pointer;opacity:.6;font-size:15px;line-height:1;';
-      x.onclick = function () { b.remove(); };
-      b.appendChild(x);
+      b.querySelector('.dsh-upd-title').textContent = '发现新版本 v' + ${v};
+      b.querySelector('.dsh-upd-sub').textContent = '正在下载 ' + ${pct} + '%';
+      b.querySelector('.dsh-upd-fill').style.width = ${pct} + '%';
+    })();
+  `).catch(() => {});
+}
+
+function showUpdateReady(version) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  injectUpdateCss();
+  const v = JSON.stringify(String(version ?? ''));
+  mainWindow.webContents.executeJavaScript(`
+    (function () {
+      if (document.getElementById('dsh-upd-overlay')) return;
+      var o = document.createElement('div');
+      o.id = 'dsh-upd-overlay';
+      o.className = 'dsh-upd-overlay';
+      o.innerHTML = '<div class="dsh-upd-modal"><div class="dsh-upd-ico">\\u2713</div><div class="dsh-upd-modal-title">更新已就绪</div><div class="dsh-upd-modal-ver">v' + ${v} + '</div><div class="dsh-upd-modal-desc">重启应用后完成安装</div><div><button class="dsh-upd-btn dsh-upd-btn-primary" id="dsh-upd-restart">立即重启</button><button class="dsh-upd-btn dsh-upd-btn-ghost" id="dsh-upd-later">稍后</button></div></div>';
+      o.querySelector('#dsh-upd-restart').onclick = function () {
+        if (window.dshDesktop && window.dshDesktop.restartUpdate) window.dshDesktop.restartUpdate();
+      };
+      o.querySelector('#dsh-upd-later').onclick = function () { o.remove(); };
+      o.onclick = function (e) { if (e.target === o) o.remove(); };
+      (document.body || document.documentElement).appendChild(o);
     })();
   `).catch(() => {});
 }
@@ -490,8 +541,10 @@ function dismissUpdateBanner() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.executeJavaScript(`
     (function () {
-      var b = document.getElementById('dsh-upd-banner');
+      var b = document.getElementById('dsh-upd-card');
       if (b) b.remove();
+      var o = document.getElementById('dsh-upd-overlay');
+      if (o) o.remove();
     })();
   `).catch(() => {});
 }
@@ -521,28 +574,22 @@ function setupAutoUpdate() {
   autoUpdater.on('checking-for-update', () => logUpd('checking...'));
   autoUpdater.on('update-available', (i) => {
     logUpd(`available: ${i.version}`);
-    showUpdateBanner(`发现新版本 v${i.version}，正在下载…`);
+    pendingUpdateVersion = i.version;
+    showUpdateProgress(i.version, 0);
   });
   autoUpdater.on('update-not-available', () => logUpd('up to date'));
-  autoUpdater.on('download-progress', (p) => logUpd(`downloading ${p.percent.toFixed(1)}%`));
-  autoUpdater.on('update-downloaded', (i) => logUpd(`downloaded ${i.version}`));
-
-  autoUpdater.on('update-downloaded', async (info) => {
+  autoUpdater.on('download-progress', (p) => {
+    logUpd(`downloading ${p.percent.toFixed(1)}%`);
+    if (pendingUpdateVersion) {
+      showUpdateProgress(pendingUpdateVersion, p.percent);
+    }
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    logUpd(`downloaded ${info.version}`);
+    pendingUpdateVersion = null;
     dismissUpdateBanner();
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    const r = await dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'DeepSeek Harness',
-      message: `新版本 ${info.version} 已就绪`,
-      detail: '重启应用后完成安装。',
-      buttons: ['立即重启', '稍后'],
-      defaultId: 0,
-    });
-    if (r.response === 0) {
-      quitting = true;
-      stopDshServer();
-      autoUpdater.quitAndInstall();
-    }
+    showUpdateReady(info.version);
   });
   autoUpdater.on('error', () => {});
 
@@ -572,8 +619,10 @@ ipcMain.on('dsh-check-update', async () => {
         message: '已是最新版本',
         detail: `当前版本 ${app.getVersion()}`,
       });
+    } else {
+      // 发现新版：立即展示进度卡片，下载完成后由就绪弹窗接管
+      showUpdateProgress(latest, 0);
     }
-    // 有新版：autoDownload 已开启，下载完成后由 update-downloaded 弹窗接管
   } catch (e) {
     dialog.showMessageBox(mainWindow, {
       type: 'warning',
@@ -582,6 +631,13 @@ ipcMain.on('dsh-check-update', async () => {
       detail: String(e?.message ?? e),
     });
   }
+});
+
+// 就绪弹窗「立即重启」：终止 dsh 后交给 electron-updater 安装
+ipcMain.on('dsh-restart-update', () => {
+  quitting = true;
+  stopDshServer();
+  autoUpdater.quitAndInstall();
 });
 
 // ===== TUI 窗口（Web 风格聊天 GUI，常驻 owntui 后端走 JSON 行协议）=====
