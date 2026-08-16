@@ -280,29 +280,33 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  // 注入悬浮「检查更新」按钮（页面每次加载后重新注入）
+  // 注入悬浮按钮组（TUI 窗口 + 检查更新；页面每次加载后重新注入）
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents
       .executeJavaScript(`
         (function () {
-          if (document.getElementById('dsh-upd-btn')) return;
-          var b = document.createElement('button');
-          b.id = 'dsh-upd-btn';
-          b.textContent = '\\u27f3 检查更新';
-          b.title = '检查 DeepSeek Harness 桌面端更新';
-          b.style.cssText = [
-            'position:fixed', 'right:12px', 'bottom:12px', 'z-index:2147483647',
-            'padding:4px 10px', 'font-size:12px', 'line-height:1.5',
-            'border:1px solid rgba(255,255,255,.18)', 'border-radius:8px',
-            'background:rgba(20,20,26,.72)', 'color:#e8e8ec',
-            'cursor:pointer', 'backdrop-filter:blur(6px)', 'opacity:.75',
-          ].join(';');
-          b.onmouseenter = function () { b.style.opacity = '1'; };
-          b.onmouseleave = function () { b.style.opacity = '.75'; };
-          b.onclick = function () {
-            if (window.dshDesktop && window.dshDesktop.checkUpdate) window.dshDesktop.checkUpdate();
-          };
-          (document.body || document.documentElement).appendChild(b);
+          function mkBtn(id, text, title, fn, rightPx) {
+            if (document.getElementById(id)) return;
+            var b = document.createElement('button');
+            b.id = id;
+            b.textContent = text;
+            b.title = title;
+            b.style.cssText = [
+              'position:fixed', 'right:' + rightPx + 'px', 'bottom:12px', 'z-index:2147483647',
+              'padding:4px 10px', 'font-size:12px', 'line-height:1.5',
+              'border:1px solid rgba(255,255,255,.18)', 'border-radius:8px',
+              'background:rgba(20,20,26,.72)', 'color:#e8e8ec',
+              'cursor:pointer', 'backdrop-filter:blur(6px)', 'opacity:.75',
+            ].join(';');
+            b.onmouseenter = function () { b.style.opacity = '1'; };
+            b.onmouseleave = function () { b.style.opacity = '.75'; };
+            b.onclick = fn;
+            (document.body || document.documentElement).appendChild(b);
+          }
+          mkBtn('dsh-upd-btn', '\\u27f3 检查更新', '检查 DeepSeek Harness 桌面端更新',
+            function () { if (window.dshDesktop && window.dshDesktop.checkUpdate) window.dshDesktop.checkUpdate(); }, 12);
+          mkBtn('dsh-tui-btn', '\\u2328 TUI', '打开终端 TUI 窗口（owntui）',
+            function () { if (window.dshDesktop && window.dshDesktop.openTui) window.dshDesktop.openTui(); }, 106);
         })();
       `)
       .catch(() => {});
@@ -443,6 +447,112 @@ ipcMain.on('dsh-check-update', async () => {
     });
   }
 });
+
+// ===== TUI 窗口（Web 风格聊天 GUI，常驻 owntui 后端走 JSON 行协议）=====
+let tuiWindow = null;
+let tuiBackend = null;
+let tuiBuf = '';
+
+function tuiDshEntry() {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'node_modules')
+    : path.join(__dirname, 'node_modules');
+  return path.join(base, '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+}
+
+function killTuiBackend() {
+  if (!tuiBackend) return;
+  const pid = tuiBackend.pid;
+  tuiBackend = null;
+  tuiBuf = '';
+  if (process.platform === 'win32' && pid) {
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  }
+}
+
+function guiEvent(ev) {
+  if (tuiWindow && !tuiWindow.isDestroyed()) {
+    tuiWindow.webContents.send('dsh-gui-event', ev);
+  }
+}
+
+function spawnTuiBackend() {
+  if (tuiBackend) return;
+  const nodeExe = app.isPackaged
+    ? path.join(process.resourcesPath, 'vendor', 'node.exe')
+    : process.execPath;
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', OWNTUI_IPC: '1' };
+  tuiBackend = spawn(
+    nodeExe,
+    ['--expose-internals', tuiDshEntry(), '--profile', 'owntui'],
+    { cwd: app.getPath('home'), env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
+  );
+  tuiBackend.stdout.setEncoding('utf8');
+  tuiBackend.stdout.on('data', (chunk) => {
+    tuiBuf += chunk;
+    let idx;
+    while ((idx = tuiBuf.indexOf('\n')) >= 0) {
+      const line = tuiBuf.slice(0, idx).trim();
+      tuiBuf = tuiBuf.slice(idx + 1);
+      if (!line) continue;
+      try { guiEvent(JSON.parse(line)); } catch {}
+    }
+  });
+  tuiBackend.stderr.setEncoding('utf8');
+  tuiBackend.stderr.on('data', (d) => {
+    try { fs.appendFileSync(path.join(app.getPath('userData'), 'tui-backend.log'), d); } catch {}
+  });
+  tuiBackend.on('exit', (code) => {
+    tuiBackend = null;
+    guiEvent({ type: 'exit', code });
+  });
+}
+
+function tuiWrite(obj) {
+  try { tuiBackend?.stdin.write(JSON.stringify(obj) + '\n'); } catch {}
+}
+
+function openTuiWindow() {
+  if (tuiWindow && !tuiWindow.isDestroyed()) {
+    tuiWindow.show();
+    tuiWindow.focus();
+    return;
+  }
+  // owntui profile 需已初始化（~/.dsh/profiles/owntui）
+  const profilePkg = path.join(app.getPath('home'), '.dsh', 'profiles', 'owntui', 'package.json');
+  if (!fs.existsSync(profilePkg)) {
+    dialog.showMessageBox(mainWindow ?? undefined, {
+      type: 'warning',
+      title: 'DeepSeek Harness TUI',
+      message: 'TUI 配置尚未初始化',
+      detail: '请先在任意终端执行一次：\n\nnpx @deepseek-ai/dsh plugin --profile owntui add F:/Cache/AI/dsh-desktop/owntui\n\n完成后再打开 TUI 窗口。',
+    });
+    return;
+  }
+  tuiWindow = new BrowserWindow({
+    width: 860,
+    height: 680,
+    title: 'DeepSeek Harness · TUI',
+    backgroundColor: '#101014',
+    icon: path.join(__dirname, 'icon.png'),
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+  tuiWindow.loadFile(path.join(__dirname, 'tui.html'));
+  tuiWindow.on('closed', () => {
+    tuiWindow = null;
+    killTuiBackend();
+  });
+  tuiWindow.webContents.on('did-finish-load', () => spawnTuiBackend());
+}
+
+ipcMain.on('dsh-open-tui', () => openTuiWindow());
+ipcMain.on('dsh-gui-send', (_e, text) => tuiWrite({ op: 'send', text }));
+ipcMain.on('dsh-gui-new', () => tuiWrite({ op: 'new' }));
 
 app.on('before-quit', () => {
   quitting = true;

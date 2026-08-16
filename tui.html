@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DeepSeek Harness · TUI</title>
+<style>
+  :root {
+    --bg: #101014; --panel: #16161c; --panel2: #1c1c24;
+    --border: rgba(255,255,255,.08); --border2: rgba(255,255,255,.14);
+    --text: #e8e8ec; --text2: #b4b4be; --muted: #8a8a94;
+    --accent: #4D6BFE; --accent2: #6f9bff; --user: #2a3d8f;
+    --ok: #34c77b; --warn: #ffb84d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif; font-size: 14px;
+    display: flex; flex-direction: column; overflow: hidden; }
+
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2c2c38; border-radius: 5px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a4a; }
+
+  /* ── 顶栏 ─────────────────────────── */
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 18px;
+    border-bottom: 1px solid var(--border); background: var(--panel); flex: none; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; flex: none;
+    background: linear-gradient(135deg, #4D6BFE 0%, #1e2f8f 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; letter-spacing: .3px; }
+  .htitle { font-size: 14.5px; font-weight: 600; letter-spacing: .2px; }
+  .hsub { font-size: 11.5px; color: var(--muted); margin-top: 1px; max-width: 420px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hspace { flex: 1; }
+  .hbtn { padding: 6px 14px; font-size: 12.5px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border2); background: rgba(77,107,254,.12); color: var(--accent2);
+    transition: background .15s; }
+  .hbtn:hover { background: rgba(77,107,254,.28); }
+
+  /* ── 消息区 ────────────────────────── */
+  #messages { flex: 1; overflow-y: auto; padding: 22px 26px 12px; }
+  .wrap { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+
+  .empty { margin: 8vh auto 0; text-align: center; color: var(--muted); }
+  .empty .big { width: 62px; height: 62px; border-radius: 16px; margin: 0 auto 18px;
+    background: linear-gradient(135deg, #4D6BFE, #1e2f8f);
+    display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; }
+  .empty h2 { color: var(--text); font-size: 17px; margin: 0 0 8px; font-weight: 600; }
+  .empty p { font-size: 13px; margin: 4px 0; }
+  .empty .tips { margin-top: 18px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .empty .tip { padding: 7px 14px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--panel); font-size: 12.5px; color: var(--text2); cursor: pointer;
+    transition: border-color .15s, color .15s; }
+  .empty .tip:hover { border-color: var(--accent); color: var(--text); }
+
+  .turn { display: flex; flex-direction: column; gap: 12px; }
+  .m-user { align-self: flex-end; max-width: 76%; padding: 10px 15px; border-radius: 14px 14px 4px 14px;
+    background: var(--user); font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
+    box-shadow: 0 2px 10px rgba(30,47,143,.25); }
+
+  .m-ai { align-self: stretch; display: flex; gap: 12px; }
+  .avatar { width: 30px; height: 30px; border-radius: 8px; flex: none; margin-top: 2px;
+    background: linear-gradient(135deg, #4D6BFE, #1e2f8f);
+    display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .ai-body { flex: 1; min-width: 0; }
+  .ai-content { font-size: 14px; line-height: 1.8; word-break: break-word; }
+  .ai-content p { margin: 0 0 10px; } .ai-content p:last-child { margin-bottom: 0; }
+  .ai-content h1, .ai-content h2, .ai-content h3 { margin: 14px 0 8px; line-height: 1.4; }
+  .ai-content h1 { font-size: 17px; } .ai-content h2 { font-size: 15.5px; } .ai-content h3 { font-size: 14.5px; }
+  .ai-content ul, .ai-content ol { margin: 4px 0 10px; padding-left: 22px; }
+  .ai-content li { margin: 3px 0; }
+  .ai-content code { font-family: Consolas, "Courier New", monospace; font-size: 12.5px;
+    background: #26262f; padding: 2px 6px; border-radius: 5px; color: #9fc0ff; }
+  .ai-content pre { background: #0c0c10; border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; overflow-x: auto; margin: 8px 0 12px; position: relative; }
+  .ai-content pre code { background: none; padding: 0; color: #d6dcf5; font-size: 12.5px; line-height: 1.6; }
+  .copy-code { position: absolute; top: 6px; right: 6px; padding: 3px 9px; font-size: 11px;
+    border: 1px solid var(--border2); border-radius: 6px; background: rgba(22,22,28,.85);
+    color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .15s; }
+  .ai-content pre:hover .copy-code { opacity: 1; }
+  .copy-code:hover { color: var(--text); border-color: var(--accent); }
+  .ai-content table { border-collapse: collapse; margin: 8px 0 12px; font-size: 13px; }
+  .ai-content th, .ai-content td { border: 1px solid var(--border2); padding: 6px 12px; text-align: left; }
+  .ai-content th { background: #20202a; }
+  .ai-content a { color: var(--accent2); }
+  .ai-content blockquote { margin: 8px 0; padding: 6px 14px; border-left: 3px solid var(--accent);
+    background: rgba(77,107,254,.07); border-radius: 0 8px 8px 0; color: var(--text2); }
+  .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent2);
+    border-radius: 2px; margin-left: 2px; vertical-align: -2px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .meta { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+  .meta .act { cursor: pointer; padding: 2px 8px; border-radius: 6px; border: 1px solid transparent; }
+  .meta .act:hover { border-color: var(--border2); color: var(--text2); }
+
+  .toolrow { display: flex; align-items: center; gap: 9px; padding: 8px 13px;
+    border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 9px; background: var(--panel); font-size: 12.5px; color: var(--text2);
+    max-width: 100%; }
+  .toolrow .ico { color: var(--accent2); font-size: 13px; flex: none; }
+  .toolrow b { color: var(--accent2); font-weight: 600; margin-right: 4px; }
+  .toolrow .args { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+  .statusrow { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+  .spinner { width: 15px; height: 15px; border: 2px solid #33334a; border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .errline { padding: 8px 13px; border-left: 3px solid var(--warn); background: rgba(255,184,77,.07);
+    border-radius: 9px; color: var(--warn); font-size: 12.5px; }
+
+  /* ── 输入区 ────────────────────────── */
+  #inputbar { flex: none; padding: 14px 26px 18px; background: linear-gradient(to top, var(--bg) 60%, transparent); }
+  .inputbox { max-width: 860px; margin: 0 auto; border: 1px solid var(--border2); border-radius: 14px;
+    background: var(--panel); overflow: hidden; transition: border-color .15s; }
+  .inputbox:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(77,107,254,.12); }
+  #input { display: block; width: 100%; resize: none; border: none; outline: none;
+    background: transparent; color: var(--text); font: inherit; font-size: 14px; line-height: 1.6;
+    padding: 12px 16px 6px; min-height: 46px; max-height: 160px; }
+  .inputfoot { display: flex; align-items: center; gap: 10px; padding: 6px 10px 8px 16px; }
+  .hint { font-size: 11.5px; color: var(--muted); flex: 1; }
+  #send { padding: 7px 20px; border: none; border-radius: 9px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+    transition: background .15s, opacity .15s; }
+  #send:hover:not(:disabled) { background: #5d7bff; }
+  #send:disabled { background: #2a2a3a; color: #67677a; cursor: default; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">dsh</div>
+  <div>
+    <div class="htitle">DeepSeek Harness · TUI</div>
+    <div class="hsub" id="sid">自研前端 · 新会话</div>
+  </div>
+  <div class="hspace"></div>
+  <button class="hbtn" id="newbtn">＋ 新会话</button>
+</header>
+
+<div id="messages">
+  <div class="wrap" id="wrap">
+    <div class="empty" id="empty">
+      <div class="big">dsh</div>
+      <h2>开始新对话</h2>
+      <p>自研 owntui 前端 · 与桌面 Web 版共用 ~/.dsh 会话与密钥</p>
+      <div class="tips">
+        <div class="tip" data-q="用一句话介绍你自己">介绍你自己</div>
+        <div class="tip" data-q="帮我看看当前目录有什么文件">查看目录</div>
+        <div class="tip" data-q="写一个 Python 快速排序并解释">写快速排序</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="inputbar">
+  <div class="inputbox">
+    <textarea id="input" rows="1" placeholder="给智能体发消息…"></textarea>
+    <div class="inputfoot">
+      <div class="hint">Enter 发送 · Shift+Enter 换行</div>
+      <button id="send">发送</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var wrap = document.getElementById('wrap');
+  var emptyEl = document.getElementById('empty');
+  var input = document.getElementById('input');
+  var sendBtn = document.getElementById('send');
+  var sid = document.getElementById('sid');
+  var busy = false;
+  var aiTurn = null;   // { content, elBody, elContent, t0 }
+  var turnTools = 0;
+
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function scrollDown() { var m = document.getElementById('messages'); m.scrollTop = m.scrollHeight; }
+  function clearEmpty() { if (emptyEl && emptyEl.parentNode) emptyEl.remove(); }
+
+  // ── 迷你 Markdown 渲染（流式友好：每次全量重渲染） ──
+  function md(src) {
+    var codes = [];
+    src = src.replace(/```(\w*)\n?([\s\S]*?)(```|$)/g, function (_, lang, code) {
+      codes.push({ lang: lang, code: code.replace(/\n$/, '') });
+      return '\u0000CODE' + (codes.length - 1) + '\u0000';
+    });
+    var h = esc(src);
+    h = h.replace(/^###### (.*)$/gm, '<h3>$1</h3>').replace(/^##### (.*)$/gm, '<h3>$1</h3>')
+         .replace(/^#### (.*)$/gm, '<h3>$1</h3>').replace(/^### (.*)$/gm, '<h3>$1</h3>')
+         .replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>');
+    h = h.replace(/^&gt; (.*)$/gm, '<blockquote>$1</blockquote>');
+    h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    h = h.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // 列表
+    h = h.replace(/((?:^[-*] .*\n?)+)/gm, function (block) {
+      return '<ul>' + block.trim().split('\n').map(function (l) { return '<li>' + l.replace(/^[-*] /, '') + '</li>'; }).join('') + '</ul>';
+    });
+    h = h.replace(/((?:^\d+\. .*\n?)+)/gm, function (block) {
+      return '<ol>' + block.trim().split('\n').map(function (l) { return '<li>' + l.replace(/^\d+\. /, '') + '</li>'; }).join('') + '</ol>';
+    });
+    // 段落
+    h = h.split(/\n{2,}/).map(function (p) {
+      var t = p.trim();
+      if (!t) return '';
+      if (/^<(h[123]|ul|ol|blockquote|pre|\u0000)/.test(t) || t.startsWith('<')) return t;
+      return '<p>' + t.replace(/\n/g, '<br>') + '</p>';
+    }).join('');
+    // 代码块还原
+    h = h.replace(/\u0000CODE(\d+)\u0000/g, function (_, i) {
+      var c = codes[+i];
+      return '<pre><button class="copy-code" data-code="' + esc(c.code).replace(/"/g, '&quot;') + '">复制</button>' +
+        '<code>' + esc(c.code) + '</code></pre>';
+    });
+    return h || '<p></p>';
+  }
+
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('.copy-code');
+    if (b) {
+      navigator.clipboard.writeText(b.dataset.code.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+      b.textContent = '已复制'; setTimeout(function () { b.textContent = '复制'; }, 1200);
+    }
+    var tip = e.target.closest('.tip');
+    if (tip) { input.value = tip.dataset.q; doSend(); }
+  });
+
+  function addUser(text) {
+    clearEmpty();
+    var d = document.createElement('div');
+    d.className = 'm-user';
+    d.textContent = text;
+    wrap.appendChild(d);
+  }
+
+  function statusRow() {
+    clearEmpty();
+    var d = document.createElement('div');
+    d.className = 'statusrow';
+    d.innerHTML = '<div class="spinner"></div><span>思考中…</span>';
+    wrap.appendChild(d);
+    scrollDown();
+    return d;
+  }
+
+  function startAi() {
+    var sr = document.querySelector('.statusrow'); if (sr) sr.remove();
+    var t = document.createElement('div');
+    t.className = 'm-ai';
+    t.innerHTML = '<div class="avatar">dsh</div><div class="ai-body"><div class="ai-content"></div></div>';
+    wrap.appendChild(t);
+    aiTurn = { content: '', el: t.querySelector('.ai-content'), body: t.querySelector('.ai-body'), t0: Date.now() };
+    renderAi(true);
+  }
+
+  function renderAi(streaming) {
+    if (!aiTurn) return;
+    aiTurn.el.innerHTML = md(aiTurn.content);
+    if (streaming) {
+      var c = document.createElement('span');
+      c.className = 'cursor';
+      aiTurn.el.appendChild(c);
+    }
+    scrollDown();
+  }
+
+  function finishAi() {
+    if (!aiTurn) return;
+    renderAi(false);
+    var secs = ((Date.now() - aiTurn.t0) / 1000).toFixed(1);
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = '<span>' + (turnTools ? turnTools + ' 次工具调用 · ' : '') + secs + ' 秒</span>' +
+      '<span class="act" data-copy>复制全文</span>';
+    meta.querySelector('[data-copy]').onclick = function () {
+      navigator.clipboard.writeText(aiTurn.content);
+      this.textContent = '已复制'; var s = this; setTimeout(function () { s.textContent = '复制全文'; }, 1200);
+    };
+    aiTurn.body.appendChild(meta);
+    aiTurn = null;
+    turnTools = 0;
+  }
+
+  function addTool(name, brief) {
+    turnTools++;
+    var sr = document.querySelector('.statusrow'); if (sr) sr.remove();
+    var d = document.createElement('div');
+    d.className = 'toolrow';
+    d.innerHTML = '<span class="ico">⚙</span><b></b><span class="args"></span>';
+    d.querySelector('b').textContent = name;
+    d.querySelector('.args').textContent = brief || '';
+    wrap.appendChild(d);
+    if (aiTurn) { // 工具在回复中间出现：结束当前气泡，之后新文本开新气泡
+      finishAi();
+    }
+    wrap.appendChild(statusRow());
+  }
+
+  function addErr(text) {
+    var d = document.createElement('div');
+    d.className = 'errline';
+    d.textContent = '✗ ' + text;
+    wrap.appendChild(d);
+    scrollDown();
+  }
+
+  window.dshGui.onEvent(function (ev) {
+    if (ev.type === 'assistant') {
+      if (!aiTurn) startAi();
+      aiTurn.content += (aiTurn.content ? '\n\n' : '') + ev.text;
+      renderAi(true);
+    } else if (ev.type === 'tool') {
+      addTool(ev.name, ev.brief);
+    } else if (ev.type === 'reply-end') {
+      if (ev.error) addErr(ev.error);
+      // 兜底：没有流式事件时直接用 reply-end 的完整文本
+      if (!aiTurn && ev.text) { startAi(); aiTurn.content = ev.text; }
+      else if (aiTurn && !aiTurn.content && ev.text) { aiTurn.content = ev.text; }
+      if (aiTurn) finishAi();
+      var sr = document.querySelector('.statusrow'); if (sr) sr.remove();
+      setBusy(false);
+    } else if (ev.type === 'title') {
+      sid.textContent = ev.title + ' · owntui';
+    } else if (ev.type === 'session') {
+      sid.textContent = ev.id + ' · owntui';
+    } else if (ev.type === 'error') {
+      addErr(ev.message);
+      setBusy(false);
+    } else if (ev.type === 'exit') {
+      addErr('后端进程已退出（code=' + ev.code + '），关闭窗口后重新打开即可');
+      setBusy(false);
+    }
+  });
+
+  function setBusy(b) {
+    busy = b;
+    sendBtn.disabled = b;
+    if (!b) { var sr = document.querySelector('.statusrow'); if (sr) sr.remove(); }
+  }
+
+  function doSend() {
+    var text = input.value.trim();
+    if (!text || busy) return;
+    input.value = '';
+    input.style.height = 'auto';
+    addUser(text);
+    setBusy(true);
+    turnTools = 0;
+    aiTurn = null;
+    wrap.appendChild(statusRow());
+    scrollDown();
+    window.dshGui.send(text);
+  }
+  sendBtn.onclick = doSend;
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+  });
+  input.addEventListener('input', function () {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  });
+  document.getElementById('newbtn').onclick = function () {
+    if (busy) return;
+    wrap.innerHTML = '';
+    aiTurn = null; turnTools = 0;
+    sid.textContent = '自研前端 · 新会话';
+    window.dshGui.newSession();
+  };
+  input.focus();
+})();
+</script>
+</body>
+</html>

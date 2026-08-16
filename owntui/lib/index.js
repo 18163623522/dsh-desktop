@@ -49,6 +49,7 @@ const brief = (v, n = 80) => {
 
 export function apply(ctx, config) {
   const debug = !!process.env.OWNTUI_DEBUG;
+  const ipcMode = process.env.OWNTUI_IPC === '1';
   let agent = null;
   let currentSession = null;
   let agentsSvc = null;
@@ -57,6 +58,8 @@ export function apply(ctx, config) {
   let streamedThisTurn = false;
 
   ctx.on('session/event', (session, event) => {
+    // IPC 模式下终端渲染器不得写 stdout（会污染 JSON 行协议）
+    if (ipcMode) return;
     if (!agent || session !== agent.session) return;
     if (debug) {
       try { w(C.dim(`[evt] ${JSON.stringify(event).slice(0, 600)}\n`)); } catch {}
@@ -143,7 +146,74 @@ export function apply(ctx, config) {
     process.exit(1);
   });
 
+  // IPC 模式：GUI 窗口用。stdin 逐行收 JSON 指令，stdout 逐行回 JSON 事件。
+  async function runIpc() {
+    await ctx.get('loader')?.await();
+    agentsSvc = ctx.get('agents');
+    defaultModelSvc = ctx.get('agentDefaultModel');
+    sessionsSvc = ctx.get('sessions');
+
+    const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
+    const rl = readline.createInterface({ input: process.stdin, terminal: false });
+
+    ctx.on('session/event', (session, event) => {
+      if (!agent || session !== agent.session) return;
+      const t = event?.type;
+      if (t === 'assistant/message') {
+        const text = (event.data?.message?.content ?? [])
+          .filter((b) => b?.type === 'text')
+          .map((b) => b.text)
+          .join('');
+        if (text) emit({ type: 'assistant', text });
+      } else if (t === 'tool/call') {
+        emit({ type: 'tool', name: event.data?.name ?? 'tool', brief: brief(event.data?.args ?? event.data?.input, 120) });
+      } else if (t === 'turn/end') {
+        const reason = event.data?.reason;
+        emit({ type: 'turn-end', ok: reason?.kind !== 'error', error: reason?.kind === 'error' ? reason.error?.message : undefined });
+      } else if (t === 'session/title') {
+        emit({ type: 'title', title: event.data?.title });
+      }
+    });
+
+    emit({ type: 'ready', version: '0.1.0' });
+
+    rl.on('line', async (line) => {
+      let req;
+      try { req = JSON.parse(line); } catch { emit({ type: 'error', message: 'bad json' }); return; }
+      try {
+        if (req.op === 'send') {
+          const outcome = await send(req.text);
+          emit({ type: 'reply-end', text: outcome?.text ?? '', ok: outcome?.reason?.kind !== 'error', error: outcome?.reason?.error?.message });
+        } else if (req.op === 'new') {
+          await newAgent(`session-${crypto.randomUUID()}`);
+          emit({ type: 'session', id: currentSession });
+        } else if (req.op === 'resume') {
+          const sel = defaultModelSvc.currentSelection();
+          const r = await agentsSvc.resume({
+            resumeSessionId: req.id,
+            agentOptions: { provider: sel.provider, model: sel.model },
+            setup: (agentCtx) => { installModelSelection(agentCtx, { current: sel, assembled: undefined }); },
+          });
+          agent = r.agent ?? r;
+          currentSession = req.id;
+          await idle();
+          emit({ type: 'session', id: currentSession });
+        } else if (req.op === 'ping') {
+          emit({ type: 'pong' });
+        } else if (req.op === 'exit') {
+          await exitApp(0);
+        } else {
+          emit({ type: 'error', message: 'unknown op: ' + req.op });
+        }
+      } catch (e) {
+        emit({ type: 'error', message: String(e?.message ?? e) });
+      }
+    });
+    rl.on('close', () => { exitApp(0); });
+  }
+
   async function run() {
+    if (process.env.OWNTUI_IPC === '1') return runIpc();
     await ctx.get('loader')?.await();
     agentsSvc = ctx.get('agents');
     defaultModelSvc = ctx.get('agentDefaultModel');
