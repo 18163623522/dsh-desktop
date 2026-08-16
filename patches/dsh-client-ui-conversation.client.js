@@ -3343,6 +3343,9 @@ window.__ModuleLoader__.load({
 			const [preview, setPreview] = (0, react.useState)(null);
 			const [dragActive, setDragActive] = (0, react.useState)(false);
 			const [toast, setToast] = (0, react.useState)(null);
+			const [longDraftExpanded, setLongDraftExpanded] = (0, react.useState)(false);
+			const longDraft = draft.length > LONG_TEXT_CHARS;
+			const draftCollapsed = longDraft && !longDraftExpanded;
 			const toastSeq = (0, react.useRef)(0);
 			const showToast = (0, react.useCallback)((text) => {
 				toastSeq.current += 1;
@@ -3775,7 +3778,13 @@ window.__ModuleLoader__.load({
 									}
 								})
 							}),
-							(0, react_jsx_runtime.jsx)("div", {
+							draftCollapsed ? (0, react_jsx_runtime.jsx)(LongDraftCard, {
+								text: draft,
+								onExpand: () => {
+									setLongDraftExpanded(true);
+								},
+								t
+							}) : (0, react_jsx_runtime.jsx)("div", {
 								ref: scrollRef,
 								className: InputBar_module_css_default.scroll,
 								"data-input-scroll": true,
@@ -3847,6 +3856,14 @@ window.__ModuleLoader__.load({
 										(0, react_jsx_runtime.jsxs)("div", {
 											className: InputBar_module_css_default.modes,
 											children: [accessSelect, renderSlot("conversation.input.plan", { locked })]
+										}),
+										longDraft && longDraftExpanded && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											variant: "ghost",
+											size: "sm",
+											onClick: () => {
+												setLongDraftExpanded(false);
+											},
+											children: t("message.longText.collapseDraft")
 										}),
 										leftItems
 									]
@@ -5149,6 +5166,108 @@ window.__ModuleLoader__.load({
 				]
 			});
 		});
+		//#region lib/types/client/chat/LongDraftCard.js
+		/** Collapsed composer draft: char count + download + expand-to-edit (editing is external). */
+		const LongDraftCard = (0, react.memo)(function LongDraftCard({ text, onExpand, t }) {
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: LongTextCard_module_css_default.root,
+				children: [
+					(0, react_jsx_runtime.jsxs)("div", {
+						className: LongTextCard_module_css_default.head,
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: LongTextCard_module_css_default.icon,
+								"aria-hidden": true,
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconListPenOutline16, {})
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: LongTextCard_module_css_default.title,
+								children: t("message.longText.draft")
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: LongTextCard_module_css_default.meta,
+								children: t("message.longText.chars", { n: text.length })
+							}),
+							(0, react_jsx_runtime.jsxs)("span", {
+								className: LongTextCard_module_css_default.actions,
+								children: [
+									(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "ghost",
+										size: "sm",
+										icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDownloadOutline16, {}),
+										onClick: () => {
+											downloadTextFile(text);
+										},
+										children: t("message.longText.download")
+									}),
+									(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "ghost",
+										size: "sm",
+										onClick: onExpand,
+										children: t("message.longText.expandEdit")
+									})
+								]
+							})
+						]
+					})
+				]
+			});
+		});
+		//#region lib/types/client/chat/codeFold.js
+		/**
+		* Collapse long markdown code blocks on the live DOM. The CodeBlock primitive
+		* ships inside the prebuilt web shell (not this client plugin), so this folds
+		* any rendered `.md-code-block` over the line threshold with an expand toggle.
+		*/
+		const CODE_FOLD_LINES = 30;
+		function foldLongCode(root) {
+			if (!root || typeof root.querySelectorAll !== "function") return;
+			root.querySelectorAll(".md-code-block").forEach((block) => {
+				if (block.getAttribute("data-code-fold") !== null) return;
+				const pre = block.querySelector("pre");
+				const text = pre ? pre.textContent : block.textContent;
+				const lines = (text ?? "").split("\n").length;
+				if (lines <= CODE_FOLD_LINES) return;
+				block.setAttribute("data-code-fold", "folded");
+				block.style.maxHeight = "20rem";
+				block.style.overflow = "hidden";
+				block.style.position = "relative";
+				const btn = document.createElement("button");
+				btn.type = "button";
+				btn.textContent = `… 展开其余 ${lines - CODE_FOLD_LINES} 行`;
+				btn.style.cssText = "position:absolute;left:50%;top:17.5rem;transform:translateX(-50%);z-index:2;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:2px 12px;cursor:pointer";
+				btn.onclick = () => {
+					const folded = block.getAttribute("data-code-fold") === "folded";
+					if (folded) {
+						block.setAttribute("data-code-fold", "open");
+						block.style.maxHeight = "";
+						block.style.overflow = "";
+						btn.textContent = "收起";
+						btn.style.top = "auto";
+						btn.style.bottom = "6px";
+					} else {
+						block.setAttribute("data-code-fold", "folded");
+						block.style.maxHeight = "20rem";
+						block.style.overflow = "hidden";
+						btn.textContent = `… 展开其余 ${lines - CODE_FOLD_LINES} 行`;
+						btn.style.top = "17.5rem";
+						btn.style.bottom = "auto";
+					}
+				};
+				block.appendChild(btn);
+			});
+		}
+		if (typeof document !== "undefined" && typeof MutationObserver !== "undefined") {
+			foldLongCode(document);
+			const codeFoldObserver = new MutationObserver((records) => {
+				for (const record of records) {
+					for (const node of record.addedNodes) {
+						if (node.nodeType === 1) foldLongCode(node);
+					}
+				}
+			});
+			codeFoldObserver.observe(document.body, { childList: true, subtree: true });
+		}
 		//#endregion
 		/** Right-aligned bubble shared by user and steering rows. */
 		function UserStyleBubble({ content, imageLoader, actions, pending = false, t }) {
@@ -5168,12 +5287,7 @@ window.__ModuleLoader__.load({
 						labels: messageImageLabels(t)
 					}), showBubble && (0, react_jsx_runtime.jsxs)("div", {
 						className: MessageItem_module_css_default.bubble,
-						children: [text.length > LONG_TEXT_CHARS ? (0, react_jsx_runtime.jsx)(LongTextCard, {
-							text,
-							title: t("message.longText.input"),
-							body: projectUserText(text),
-							t
-						}) : projectUserText(text), rest.map((block, i) => (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.JsonBlock, {
+						children: [projectUserText(text), rest.map((block, i) => (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.JsonBlock, {
 							label: t("message.extraBlock"),
 							payload: block,
 							truncatedLabel: truncated
@@ -6042,6 +6156,9 @@ window.__ModuleLoader__.load({
 			"message.longText.download": "下载 .txt",
 			"message.longText.expand": "展开",
 			"message.longText.collapse": "收起",
+			"message.longText.draft": "长文本草稿",
+			"message.longText.expandEdit": "展开编辑",
+			"message.longText.collapseDraft": "收起为 .txt",
 			"clock.md": "{m}月{d}日",
 			"clock.ymd": "{y}年{m}月{d}日"
 		};
@@ -6213,6 +6330,9 @@ window.__ModuleLoader__.load({
 			"message.longText.download": "Download .txt",
 			"message.longText.expand": "Expand",
 			"message.longText.collapse": "Collapse",
+			"message.longText.draft": "Long draft",
+			"message.longText.expandEdit": "Expand to edit",
+			"message.longText.collapseDraft": "Collapse to .txt",
 			"clock.md": "{m}/{d}",
 			"clock.ymd": "{y}-{m}-{d}"
 		};
@@ -9143,25 +9263,12 @@ window.__ModuleLoader__.load({
 				if (block === void 0) continue;
 				switch (block.kind) {
 					case "text":
-						if (!streaming && block.text.length > LONG_TEXT_CHARS) {
-							rendered.push((0, react_jsx_runtime.jsx)(LongTextCard, {
-								text: block.text,
-								title: t("message.longText.reply"),
-								body: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MarkdownText, {
-									text: block.text,
-									codeLabels,
-									fileMentions: mentions
-								}),
-								t
-							}, i));
-						} else {
-							rendered.push((0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MarkdownText, {
-								text: block.text,
-								streaming,
-								codeLabels,
-								fileMentions: mentions
-							}, i));
-						}
+						rendered.push((0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MarkdownText, {
+							text: block.text,
+							streaming,
+							codeLabels,
+							fileMentions: mentions
+						}, i));
 						break;
 					case "reasoning":
 						rendered.push((0, react_jsx_runtime.jsx)(ReasoningRow, {
