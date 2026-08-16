@@ -398,6 +398,47 @@ function fatal(message) {
   app.exit(1);
 }
 
+// ===== 更新通知横幅（发现新版本时在页面顶部提示，下载完成后由重启弹窗接管）=====
+function showUpdateBanner(text) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const msg = JSON.stringify(String(text ?? ''));
+  mainWindow.webContents.executeJavaScript(`
+    (function () {
+      var b = document.getElementById('dsh-upd-banner');
+      if (!b) {
+        b = document.createElement('div');
+        b.id = 'dsh-upd-banner';
+        b.style.cssText = [
+          'position:fixed', 'top:12px', 'left:50%', 'transform:translateX(-50%)', 'z-index:2147483647',
+          'padding:8px 14px', 'font-size:13px', 'line-height:1.5',
+          'border:1px solid rgba(255,255,255,.18)', 'border-radius:10px',
+          'background:rgba(20,20,26,.85)', 'color:#e8e8ec',
+          'box-shadow:0 4px 16px rgba(0,0,0,.4)', 'backdrop-filter:blur(8px)',
+          'display:flex', 'align-items:center', 'gap:10px', 'max-width:80vw'
+        ].join(';');
+        (document.body || document.documentElement).appendChild(b);
+      }
+      b.textContent = '';
+      b.appendChild(document.createTextNode(${msg}));
+      var x = document.createElement('span');
+      x.textContent = '\\u00d7';
+      x.style.cssText = 'cursor:pointer;opacity:.6;font-size:15px;line-height:1;';
+      x.onclick = function () { b.remove(); };
+      b.appendChild(x);
+    })();
+  `).catch(() => {});
+}
+
+function dismissUpdateBanner() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.executeJavaScript(`
+    (function () {
+      var b = document.getElementById('dsh-upd-banner');
+      if (b) b.remove();
+    })();
+  `).catch(() => {});
+}
+
 // ===== 自动更新（electron-updater + GitHub Releases，仓库公开可匿名下载）=====
 // 便携版不支持自更新（electron-updater 限制），出错一律静默不打扰。
 // DSH_UPDATER_TEST=1：开发模式测试钩子——伪装成旧版本走完整检查/下载流程
@@ -421,12 +462,16 @@ function setupAutoUpdate() {
   };
   autoUpdater.logger = { info: logUpd, warn: logUpd, error: logUpd, debug: logUpd };
   autoUpdater.on('checking-for-update', () => logUpd('checking...'));
-  autoUpdater.on('update-available', (i) => logUpd(`available: ${i.version}`));
+  autoUpdater.on('update-available', (i) => {
+    logUpd(`available: ${i.version}`);
+    showUpdateBanner(`发现新版本 v${i.version}，正在下载…`);
+  });
   autoUpdater.on('update-not-available', () => logUpd('up to date'));
   autoUpdater.on('download-progress', (p) => logUpd(`downloading ${p.percent.toFixed(1)}%`));
   autoUpdater.on('update-downloaded', (i) => logUpd(`downloaded ${i.version}`));
 
   autoUpdater.on('update-downloaded', async (info) => {
+    dismissUpdateBanner();
     if (!mainWindow || mainWindow.isDestroyed()) return;
     const r = await dialog.showMessageBox(mainWindow, {
       type: 'info',
