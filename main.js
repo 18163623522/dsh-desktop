@@ -252,10 +252,34 @@ async function waitForServer() {
   return false;
 }
 
+// ===== 窗口状态记忆（大小/位置）=====
+function windowStatePath() {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+function loadWindowState(key) {
+  try {
+    const s = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8'))[key];
+    if (s && Number.isFinite(s.width) && Number.isFinite(s.height)) return s;
+  } catch {}
+  return null;
+}
+function saveWindowState(key, win) {
+  try {
+    if (win.isMinimized()) return;
+    const p = win.getPosition(), s = win.getSize();
+    const state = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8').catch(() => '{}') || '{}');
+    state[key] = { x: p[0], y: p[1], width: s[0], height: s[1] };
+    fs.writeFileSync(windowStatePath(), JSON.stringify(state, null, 2));
+  } catch {}
+}
+
 function createWindow() {
+  const saved = loadWindowState('main');
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: saved?.width ?? 1440,
+    height: saved?.height ?? 900,
+    x: saved?.x,
+    y: saved?.y,
     minWidth: 960,
     minHeight: 600,
     backgroundColor: '#101014',
@@ -269,6 +293,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  mainWindow.on('close', () => saveWindowState('main', mainWindow));
 
   mainWindow.loadFile(path.join(__dirname, 'splash.html'));
 
@@ -530,8 +555,10 @@ function openTuiWindow() {
     return;
   }
   tuiWindow = new BrowserWindow({
-    width: 860,
-    height: 680,
+    width: loadWindowState('tui')?.width ?? 860,
+    height: loadWindowState('tui')?.height ?? 680,
+    x: loadWindowState('tui')?.x,
+    y: loadWindowState('tui')?.y,
     title: 'DeepSeek Harness · TUI',
     backgroundColor: '#101014',
     icon: path.join(__dirname, 'icon.png'),
@@ -542,6 +569,7 @@ function openTuiWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  tuiWindow.on('close', () => saveWindowState('tui', tuiWindow));
   tuiWindow.loadFile(path.join(__dirname, 'tui.html'));
   tuiWindow.on('closed', () => {
     tuiWindow = null;
