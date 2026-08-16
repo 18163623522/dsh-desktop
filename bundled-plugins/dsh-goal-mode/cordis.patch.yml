@@ -1,0 +1,7 @@
+# dsh-goal-mode — bundle patch layer
+#
+# 声明目标模式为 Cordis loader entry。随包分发此文件（以及 package.json 里的
+# dsh.bundle.patch 字段）即可让包作为标准 profile bundle 被自动挂载。
+- insert:
+    - id: goal-mode
+      name: 'dsh-goal-mode'

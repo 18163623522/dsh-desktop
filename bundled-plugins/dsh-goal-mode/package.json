@@ -1,0 +1,30 @@
+{
+  "name": "dsh-goal-mode",
+  "version": "0.1.0",
+  "description": "目标模式：输入任务 → AI 制定计划 → 批准 → 自动创建目标并执行到完成",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "license": "MIT"
+}

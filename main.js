@@ -70,6 +70,62 @@ function profilePaths() {
   };
 }
 
+// ===== 内置插件：目标模式（dsh-goal-mode）=====
+// 随包分发「目标模式」插件，并在启动时自动挂载到 profile：
+// 1) 把插件文件落到 profile 的 node_modules；2) 把它加入 dsh.profile.bundles。
+// 幂等：已存在则跳过；失败不阻断启动。
+function ensureGoalModePlugin() {
+  const bundledDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'bundled-plugins')
+    : path.join(__dirname, 'bundled-plugins');
+  const src = path.join(bundledDir, 'dsh-goal-mode');
+  if (!fs.existsSync(path.join(src, 'package.json'))) return; // 未随包分发，跳过
+
+  const { pkg: pkgPath, nodeModules } = profilePaths();
+  const dst = path.join(nodeModules, 'dsh-goal-mode');
+  const BUNDLE = 'dsh-goal-mode';
+  const log = (m) => {
+    try { fs.appendFileSync(path.join(app.getPath('userData'), 'dsh-server.log'), `[dsh-goal-mode] ${m}\n`); } catch {}
+  };
+
+  try {
+    // 1) 插件文件：仅在缺失时复制
+    if (!fs.existsSync(path.join(dst, 'package.json'))) {
+      fs.mkdirSync(dst, { recursive: true });
+      for (const f of ['index.js', 'client.js', 'cordis.patch.yml', 'package.json']) {
+        const from = path.join(src, f);
+        if (fs.existsSync(from)) fs.copyFileSync(from, path.join(dst, f));
+      }
+      log('copied plugin into profile node_modules');
+    }
+
+    // 2) profile package.json：确保 dsh-goal-mode 在 bundles 里
+    let manifest;
+    if (fs.existsSync(pkgPath)) {
+      manifest = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    } else {
+      // 首次运行：按 dsh 默认模板创建，并带上 dsh-goal-mode
+      manifest = {
+        name: 'dsh-profile-web',
+        private: true,
+        dependencies: {},
+        dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } }
+      };
+      fs.mkdirSync(path.dirname(pkgPath), { recursive: true });
+    }
+    const bundles = manifest.dsh && manifest.dsh.profile && manifest.dsh.profile.bundles;
+    if (Array.isArray(bundles) && !bundles.includes(BUNDLE)) {
+      manifest.dsh = manifest.dsh || {};
+      manifest.dsh.profile = manifest.dsh.profile || {};
+      manifest.dsh.profile.bundles = [...bundles, BUNDLE];
+      fs.writeFileSync(pkgPath, JSON.stringify(manifest, null, 2) + '\n');
+      log('mounted dsh-goal-mode in profile bundles');
+    }
+  } catch (e) {
+    log(`auto-mount failed: ${e && e.message ? e.message : e}`);
+  }
+}
+
 function bundleDeclaredIds(nodeModules, bundle) {
   const root = path.join(nodeModules, ...bundle.split('/'));
   const ymls = [];
@@ -351,6 +407,7 @@ function createWindow() {
 
 async function main() {
   Menu.setApplicationMenu(null);
+  ensureGoalModePlugin();
   createWindow();
 
   // 端口已被占用时（例如已有一个 dsh 实例），直接复用现有服务
