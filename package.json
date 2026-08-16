@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "DeepSeek Harness (dsh) 桌面端 — Electron 壳内嵌官方 dsh web 服务",
   "main": "main.js",
   "author": "dsh-desktop",
@@ -43,6 +43,10 @@
       {
         "from": "vendor",
         "to": "vendor"
+      },
+      {
+        "from": "bundled-skills",
+        "to": "bundled-skills"
       }
     ],
     "npmRebuild": false,

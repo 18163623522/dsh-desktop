@@ -44,6 +44,13 @@ function resolveDshEntry() {
   );
 }
 
+// 内置 skill 根目录：随包分发的技能（rank 最低，用户/项目自装同名 skill 可覆盖）
+function bundledSkillDir() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'bundled-skills')
+    : path.join(__dirname, 'bundled-skills');
+}
+
 function dshLogPath() {
   return path.join(app.getPath('userData'), 'dsh-server.log');
 }
@@ -170,6 +177,8 @@ function startDshServer() {
   const logStream = fs.createWriteStream(dshLogPath(), { flags: 'w' });
 
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  // 随包内置的 skill（如 j-space），通过 skill-filesystem 的 bundled 根加载
+  env.DSH_BUNDLED_SKILL_DIR = bundledSkillDir();
   // dsh 检测到环境变量提供 API 密钥时，会把设置界面的密钥输入框锁定为只读
   // （“由启动环境提供”）。剥离这些变量，让密钥在界面中可填写、由 dsh 配置管理。
   delete env.DEEPSEEK_API_KEY;
@@ -507,6 +516,7 @@ function spawnTuiBackend() {
     ? path.join(process.resourcesPath, 'vendor', 'node.exe')
     : process.execPath;
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', OWNTUI_IPC: '1' };
+  env.DSH_BUNDLED_SKILL_DIR = bundledSkillDir();
   tuiBackend = spawn(
     nodeExe,
     ['--expose-internals', tuiDshEntry(), '--profile', 'owntui'],
