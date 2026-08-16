@@ -8,6 +8,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
+    "postinstall": "node scripts/apply-patches.js",
+    "predist": "node scripts/apply-patches.js",
     "dist": "electron-builder --win portable nsis"
   },
   "dependencies": {

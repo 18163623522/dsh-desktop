@@ -1,6 +1,9 @@
 {
   "name": "dsh-app-deps",
   "private": true,
+  "scripts": {
+    "postinstall": "node ../scripts/apply-patches.js"
+  },
   "dependencies": {
     "@deepseek-ai/dsh": "^0.1.0-rc.6"
   }
