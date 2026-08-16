@@ -48,6 +48,7 @@ export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-
 ## 行为说明
 
 - 单实例锁；若 3080 端口已有 dsh 服务在跑会直接复用
+- 内置 skill：随包分发 `bundled-skills/` 目录（当前内置 J-Space 认知套件），启动时通过 `DSH_BUNDLED_SKILL_DIR` 环境变量挂载，由 dsh 的 skill-filesystem 插件以 `bundled` 源（rank 600，最低优先级）加载；用户/项目自装同名 skill 可覆盖内置版本
 - 退出时按进程树终止 dsh 及其派生进程（Windows `taskkill /T /F`）
 - dsh 服务日志：`%APPDATA%\DeepSeek Harness\dsh-server.log`
 - 便携版按「应用名+版本号」缓存临时解压目录，改版本号可强制重新解压
