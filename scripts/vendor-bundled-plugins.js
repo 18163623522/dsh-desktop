@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
-const VENDORED = ['dsh-at-file', 'dsh-goal-mode'];
+const VENDORED = ['dsh-at-file', 'dsh-goal-mode', 'dsh-manager'];
 const TARGETS = ['node_modules', path.join('app-deps', 'node_modules')];
 
 function copyDir(src, dst) {

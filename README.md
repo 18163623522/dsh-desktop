@@ -65,8 +65,9 @@ export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-
   | `@nanmicoder/dsh-auto-mode` | 自动权限模式 |
   | `@nanmicoder/dsh-agent-teams` | 多代理协作 |
   | `deepseek-flow` | 深度求索工作流 |
+  | `dsh-manager` | 设置页「MCP / Skill / Agent」管理入口（打开桌面端管理窗口） |
 
-- 管理窗口：右下角悬浮「⚙ 管理」按钮打开独立管理窗口，集中管理 **MCP 服务器**（写入 profile `cordis.patch.yml` 的 `mcp-client` 行，dsh 热加载）、**Skill 自定义目录**（`skill-filesystem` 的 `customSkillDirs`，热加载）与 **Agent 预设**（`~/.dsh/.agent-presets` 增删 + `settings.yaml` 默认预设）
+- 管理窗口：**设置页新增「MCP / Skill / Agent」分区**（`dsh-manager` 客户端插件注册 settings.section，三个直达按钮）+ 右下角悬浮「⚙ 管理」按钮，打开独立管理窗口，集中管理 **MCP 服务器**（写入 profile `cordis.patch.yml` 的 `mcp-client` 行，dsh 热加载）、**Skill 自定义目录**（`skill-filesystem` 的 `customSkillDirs`，热加载）与 **Agent 预设**（`~/.dsh/.agent-presets` 增删 + `settings.yaml` 默认预设）
 - 退出时按进程树终止 dsh 及其派生进程（Windows `taskkill /T /F`）
 - dsh 服务日志：`%APPDATA%\DeepSeek Harness\dsh-server.log`
 - 便携版按「应用名+版本号」缓存临时解压目录，改版本号可强制重新解压

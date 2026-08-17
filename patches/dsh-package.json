@@ -92,7 +92,8 @@
     "@nanmicoder/dsh-agent-teams": "0.1.6",
     "deepseek-flow": "0.3.21",
     "dsh-at-file": "0.6.1",
-    "dsh-goal-mode": "0.1.0"
+    "dsh-goal-mode": "0.1.0",
+    "dsh-manager": "0.1.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

@@ -493,6 +493,18 @@ $('btn-restart-force').onclick = async () => {
 };
 
 (async () => {
+  // 打开时直达指定标签页（?tab=mcp|skill|agent，或主进程 focus-tab 事件）
+  const focusTab = (tab) => {
+    if (tab === 'mcp' || tab === 'skill' || tab === 'agent') switchTab(tab);
+  };
+  try {
+    const q = new URLSearchParams(window.location.search);
+    focusTab(q.get('tab'));
+    if (window.dshDesktop && typeof window.dshDesktop.onManagerFocusTab === 'function') {
+      window.dshDesktop.onManagerFocusTab(focusTab);
+    }
+  } catch (e) {}
+
   try {
     const r = await inv('state');
     if (r && r.ok) { state = r; renderAll(); }

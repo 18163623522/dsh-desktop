@@ -88,7 +88,8 @@ const BUNDLED_PLUGINS = [
   '@liustack/modlens',           // 模型透镜
   '@nanmicoder/dsh-auto-mode',   // 自动权限模式
   '@nanmicoder/dsh-agent-teams', // 多代理协作
-  'deepseek-flow'                // 深度求索工作流
+  'deepseek-flow',               // 深度求索工作流
+  'dsh-manager'                  // 设置页管理入口（MCP/Skill/Agent）
 ];
 
 function ensureBundledPlugins() {
@@ -956,10 +957,11 @@ function managerState() {
   };
 }
 
-function openManagerWindow() {
+function openManagerWindow(tab) {
   if (managerWindow && !managerWindow.isDestroyed()) {
     managerWindow.show();
     managerWindow.focus();
+    if (tab) managerWindow.webContents.send('manager-focus-tab', String(tab));
     return;
   }
   managerWindow = new BrowserWindow({
@@ -977,13 +979,15 @@ function openManagerWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
-  managerWindow.loadFile(path.join(__dirname, 'manager.html'));
+  managerWindow.loadFile(path.join(__dirname, 'manager.html'), {
+    query: tab ? { tab: String(tab) } : undefined,
+  });
   managerWindow.on('closed', () => {
     managerWindow = null;
   });
 }
 
-ipcMain.on('dsh-open-manager', () => openManagerWindow());
+ipcMain.on('dsh-open-manager', (_e, tab) => openManagerWindow(tab));
 
 ipcMain.handle('manager-invoke', async (_e, op, payload) => {
   const out = (extra) => ({ ok: true, ...extra });
