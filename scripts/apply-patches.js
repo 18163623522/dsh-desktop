@@ -18,6 +18,14 @@ const PATCHES = [
       'node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js',
       'app-deps/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js'
     ]
+  },
+  {
+    patch: 'dsh-package.json',
+    note: 'declare the bundled community plugins as dsh app dependencies so healProfilesModuleFallback junctions them into ~/.dsh/profiles/node_modules (installation-first bundle resolution)',
+    targets: [
+      'node_modules/@deepseek-ai/dsh/package.json',
+      'app-deps/node_modules/@deepseek-ai/dsh/package.json'
+    ]
   }
 ];
 

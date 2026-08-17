@@ -71,41 +71,38 @@ function profilePaths() {
   };
 }
 
-// ===== 内置插件：目标模式（dsh-goal-mode）=====
-// 随包分发「目标模式」插件，并在启动时自动挂载到 profile：
-// 1) 把插件文件落到 profile 的 node_modules；2) 把它加入 dsh.profile.bundles。
-// 幂等：已存在则跳过；失败不阻断启动。
-function ensureGoalModePlugin() {
-  const bundledDir = app.isPackaged
-    ? path.join(process.resourcesPath, 'bundled-plugins')
-    : path.join(__dirname, 'bundled-plugins');
-  const src = path.join(bundledDir, 'dsh-goal-mode');
-  if (!fs.existsSync(path.join(src, 'package.json'))) return; // 未随包分发，跳过
+// ===== 内置插件：随包分发的社区插件集 =====
+// 插件本体随 app-deps/node_modules 打包（resources/node_modules），dsh 的
+// bundle 解析是「安装目录优先」，因此这里只需要把插件名挂到 profile 的
+// dsh.profile.bundles（幂等；不复制文件）。插件自身的第三方依赖同样位于
+// resources/node_modules 平铺目录，由 dsh 的模块解析兜底目录自然命中。
+const BUNDLED_PLUGINS = [
+  'dsh-goal-mode',               // 目标模式（内置）
+  'dshmarket',                   // 插件市场
+  'dsh-better-sidebar',          // 侧边栏增强
+  'dsh-at-file',                 // @文件引用
+  '@anionex/dsh-vision-toolkit', // 视觉工具包
+  'dsh-mnemon',                  // 记忆
+  '@yejiming/dsh-data-agent',    // 数据代理
+  '@zseven-w/dsh-openpencil',    // 画布
+  '@liustack/modlens',           // 模型透镜
+  '@nanmicoder/dsh-auto-mode',   // 自动权限模式
+  '@nanmicoder/dsh-agent-teams', // 多代理协作
+  'deepseek-flow'                // 深度求索工作流
+];
 
-  const { pkg: pkgPath, nodeModules } = profilePaths();
-  const dst = path.join(nodeModules, 'dsh-goal-mode');
-  const BUNDLE = 'dsh-goal-mode';
+function ensureBundledPlugins() {
+  const { pkg: pkgPath } = profilePaths();
   const log = (m) => {
-    try { fs.appendFileSync(path.join(app.getPath('userData'), 'dsh-server.log'), `[dsh-goal-mode] ${m}\n`); } catch {}
+    try { fs.appendFileSync(path.join(app.getPath('userData'), 'dsh-server.log'), `[bundled-plugins] ${m}\n`); } catch {}
   };
 
   try {
-    // 1) 插件文件：仅在缺失时复制
-    if (!fs.existsSync(path.join(dst, 'package.json'))) {
-      fs.mkdirSync(dst, { recursive: true });
-      for (const f of ['index.js', 'client.js', 'cordis.patch.yml', 'package.json']) {
-        const from = path.join(src, f);
-        if (fs.existsSync(from)) fs.copyFileSync(from, path.join(dst, f));
-      }
-      log('copied plugin into profile node_modules');
-    }
-
-    // 2) profile package.json：确保 dsh-goal-mode 在 bundles 里
     let manifest;
     if (fs.existsSync(pkgPath)) {
       manifest = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     } else {
-      // 首次运行：按 dsh 默认模板创建，并带上 dsh-goal-mode
+      // 首次运行：按 dsh 默认模板创建
       manifest = {
         name: 'dsh-profile-web',
         private: true,
@@ -115,12 +112,27 @@ function ensureGoalModePlugin() {
       fs.mkdirSync(path.dirname(pkgPath), { recursive: true });
     }
     const bundles = manifest.dsh && manifest.dsh.profile && manifest.dsh.profile.bundles;
-    if (Array.isArray(bundles) && !bundles.includes(BUNDLE)) {
-      manifest.dsh = manifest.dsh || {};
-      manifest.dsh.profile = manifest.dsh.profile || {};
-      manifest.dsh.profile.bundles = [...bundles, BUNDLE];
+    if (!Array.isArray(bundles)) {
+      log('profile bundles is not an array — leaving manifest untouched');
+      return;
+    }
+    // 挂载是「每个插件一次」的决定：记录在 dsh.desktop.bundledPlugins。
+    // 已在册（曾挂载过/用户已装过）而当前不在 bundles 里的，视为用户或自愈
+    // 主动移除——不再强制加回，避免「自愈移除 → 重启再加回」的死循环。
+    const desktopMeta = manifest.dsh && manifest.dsh.desktop && typeof manifest.dsh.desktop === 'object' && !Array.isArray(manifest.dsh.desktop)
+      ? manifest.dsh.desktop
+      : {};
+    const seen = new Set(Array.isArray(desktopMeta.bundledPlugins) ? desktopMeta.bundledPlugins : []);
+    const toAdd = BUNDLED_PLUGINS.filter((b) => !bundles.includes(b) && !seen.has(b));
+    if (toAdd.length) {
+      manifest.dsh.profile.bundles = [...bundles, ...toAdd];
+      log(`mounted ${toAdd.length} bundled plugin(s) in profile bundles: ${toAdd.join(', ')}`);
+    }
+    const nextSeen = new Set([...seen, ...BUNDLED_PLUGINS.filter((b) => bundles.includes(b) || toAdd.includes(b))]);
+    manifest.dsh = manifest.dsh || {};
+    manifest.dsh.desktop = { ...desktopMeta, bundledPlugins: [...nextSeen] };
+    if (toAdd.length || !seen.size || seen.size !== nextSeen.size) {
       fs.writeFileSync(pkgPath, JSON.stringify(manifest, null, 2) + '\n');
-      log('mounted dsh-goal-mode in profile bundles');
     }
   } catch (e) {
     log(`auto-mount failed: ${e && e.message ? e.message : e}`);
@@ -150,7 +162,10 @@ function bundleDeclaredIds(nodeModules, bundle) {
   return ids;
 }
 
-// 在加载列表里找出声明了冲突 ID 的社区插件（取顺序靠后的，视为后来者/加害者）
+// 在加载列表里找出声明了冲突 ID 的社区插件（取顺序靠后的，视为后来者/加害者）。
+// 插件本体既可能在 profile 自己的 node_modules（用户自装），也可能只存在于
+// dsh 的模块解析兜底目录（随包插件，$DSH_HOME/profiles/node_modules 的 junction），
+// 两处都扫描。
 function findConflictingBundle(dupId) {
   const { pkg: pkgPath, nodeModules } = profilePaths();
   let bundles;
@@ -158,11 +173,15 @@ function findConflictingBundle(dupId) {
     bundles = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).dsh?.profile?.bundles;
   } catch { return null; }
   if (!Array.isArray(bundles)) return null;
+  const fallbackModules = path.join(app.getPath('home'), '.dsh', 'profiles', 'node_modules');
   let culprit = null;
   for (const b of bundles) {
     if (OFFICIAL_BUNDLES.has(b)) continue;
     try {
-      if (bundleDeclaredIds(nodeModules, b).has(dupId)) culprit = b;
+      if (
+        bundleDeclaredIds(nodeModules, b).has(dupId) ||
+        bundleDeclaredIds(fallbackModules, b).has(dupId)
+      ) culprit = b;
     } catch {}
   }
   return culprit;
@@ -333,7 +352,9 @@ function saveWindowState(key, win) {
   try {
     if (win.isMinimized()) return;
     const p = win.getPosition(), s = win.getSize();
-    const state = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8').catch(() => '{}') || '{}');
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8')); } catch {}
+    if (state === null || typeof state !== 'object' || Array.isArray(state)) state = {};
     state[key] = { x: p[0], y: p[1], width: s[0], height: s[1] };
     fs.writeFileSync(windowStatePath(), JSON.stringify(state, null, 2));
   } catch {}
@@ -398,6 +419,8 @@ function createWindow() {
             function () { if (window.dshDesktop && window.dshDesktop.checkUpdate) window.dshDesktop.checkUpdate(); }, 12);
           mkBtn('dsh-tui-btn', '\\u2328 TUI', '打开终端 TUI 窗口（owntui）',
             function () { if (window.dshDesktop && window.dshDesktop.openTui) window.dshDesktop.openTui(); }, 106);
+          mkBtn('dsh-mgr-btn', '\\u2699 管理', '管理 MCP / Skill / Agent',
+            function () { if (window.dshDesktop && window.dshDesktop.openManager) window.dshDesktop.openManager(); }, 200);
         })();
       `)
       .catch(() => {});
@@ -408,7 +431,7 @@ function createWindow() {
 
 async function main() {
   Menu.setApplicationMenu(null);
-  ensureGoalModePlugin();
+  ensureBundledPlugins();
   createWindow();
 
   // 端口已被占用时（例如已有一个 dsh 实例），直接复用现有服务
@@ -638,6 +661,364 @@ ipcMain.on('dsh-restart-update', () => {
   quitting = true;
   stopDshServer();
   autoUpdater.quitAndInstall();
+});
+
+// ===== 管理窗口（MCP / Skill / Agent）=====
+// 独立 BrowserWindow（manager.html），通过 IPC 直接管理 dsh 的本地配置：
+// - MCP：profile cordis.patch.yml 里的 mcp-client 行（dsh 热重载，无需重启）
+// - Skill：skill-filesystem 的 customSkillDirs 配置行 + 各 Skill 根目录浏览
+// - Agent：~/.dsh/.agent-presets 用户预设（增删）+ settings.yaml 默认预设
+let managerWindow = null;
+
+function managerHome() {
+  return app.getPath('home');
+}
+
+function managerPaths() {
+  const home = managerHome();
+  return {
+    profileDir: path.join(home, '.dsh', 'profiles', 'web'),
+    profilePatch: path.join(home, '.dsh', 'profiles', 'web', 'cordis.patch.yml'),
+    settingsYaml: path.join(home, '.dsh', 'settings.yaml'),
+    userSkillDir: path.join(home, '.dsh', 'skills'),
+    userPresetDir: path.join(home, '.dsh', '.agent-presets'),
+    shippedPresetDir: path.join(
+      app.isPackaged ? process.resourcesPath : __dirname,
+      'node_modules', '@deepseek-ai', 'dsh', 'config', 'agent-presets'
+    ),
+    bundledSkillDir: app.isPackaged
+      ? path.join(process.resourcesPath, 'bundled-skills')
+      : path.join(__dirname, 'bundled-skills'),
+  };
+}
+
+// dsh 自带 yaml 库（dsh-settings-file 依赖），打包后位于 resources/node_modules/yaml
+function loadYamlLib() {
+  try {
+    return require(path.join(app.isPackaged ? process.resourcesPath : __dirname, 'node_modules', 'yaml'));
+  } catch {
+    try { return require('yaml'); } catch { return null; }
+  }
+}
+
+function atomicWriteText(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+// 读取 profile cordis.patch.yml（不存在时按 dsh 模板创建）。解析失败返回 null。
+function readProfilePatch() {
+  const p = managerPaths().profilePatch;
+  let raw;
+  if (fs.existsSync(p)) {
+    raw = fs.readFileSync(p, 'utf8');
+  } else {
+    raw = '# Your patch layer for this dsh profile, applied after every bundle layer.\n[]\n';
+  }
+  const Y = loadYamlLib();
+  if (!Y) return null;
+  const doc = Y.parseDocument(raw);
+  if (doc.errors && doc.errors.length) return null;
+  return { Y, doc, path: p };
+}
+
+function patchEntries(doc) {
+  const seq = doc && doc.contents;
+  return seq && seq.items ? seq.items : [];
+}
+
+// 提取全部 mcp-client 条目（一行 insert 可含多个实例，对应多个服务器）
+function readMcpServers() {
+  const patch = readProfilePatch();
+  if (!patch) return { servers: [], parseError: true };
+  const servers = [];
+  for (const row of patchEntries(patch.doc)) {
+    if (!row || !row.has || !row.has('insert')) continue;
+    const ins = row.get('insert');
+    if (!ins || !ins.items) continue;
+    for (const entry of ins.items) {
+      if (entry && entry.get && entry.get('id') === 'mcp-client') {
+        const cfg = entry.get('config');
+        try { servers.push(cfg && typeof cfg.toJS === 'function' ? cfg.toJS() : {}); } catch { servers.push({}); }
+      }
+    }
+  }
+  return { servers, parseError: false };
+}
+
+function writeMcpServers(servers) {
+  if (!Array.isArray(servers)) throw new Error('servers 必须是数组');
+  const patch = readProfilePatch();
+  if (!patch) throw new Error('无法解析 cordis.patch.yml（可能包含不支持的语法），请手动编辑该文件');
+  const { Y, doc } = patch;
+  const seq = doc.contents;
+  if (!seq || !seq.items) throw new Error('cordis.patch.yml 顶层必须是数组');
+  // 1) 移除现有 mcp-client 条目（空掉的 insert 行一并删除）
+  for (const row of [...seq.items]) {
+    if (!row || !row.has || !row.has('insert')) continue;
+    const ins = row.get('insert');
+    if (!ins || !ins.items) continue;
+    const kept = ins.items.filter((e) => !(e && e.get && e.get('id') === 'mcp-client'));
+    ins.items = kept;
+    if (!kept.length) {
+      const i = seq.items.indexOf(row);
+      if (i >= 0) seq.items.splice(i, 1);
+    }
+  }
+  // 2) 追加新条目
+  if (servers.length) {
+    seq.items.push(doc.createNode({
+      insert: servers.map((s) => ({ id: 'mcp-client', config: s })),
+    }));
+  }
+  atomicWriteText(patch.path, String(doc));
+}
+
+// skill-filesystem 覆盖行（id 定向配置，customSkillDirs）
+function readCustomSkillDirs() {
+  const patch = readProfilePatch();
+  if (!patch) return { dirs: [], parseError: true };
+  let dirs = [];
+  for (const row of patchEntries(patch.doc)) {
+    if (!row || !row.get || row.has && row.has('insert')) continue;
+    if (row.get('id') !== 'skill-filesystem') continue;
+    const cfg = row.get('config');
+    try {
+      const js = cfg && typeof cfg.toJS === 'function' ? cfg.toJS() : null;
+      if (js && Array.isArray(js.customSkillDirs)) dirs = js.customSkillDirs.map(String);
+    } catch {}
+  }
+  return { dirs, parseError: false };
+}
+
+function writeCustomSkillDirs(dirs) {
+  if (!Array.isArray(dirs)) throw new Error('dirs 必须是数组');
+  const patch = readProfilePatch();
+  if (!patch) throw new Error('无法解析 cordis.patch.yml（可能包含不支持的语法），请手动编辑该文件');
+  const { Y, doc } = patch;
+  const seq = doc.contents;
+  if (!seq || !seq.items) throw new Error('cordis.patch.yml 顶层必须是数组');
+  for (const row of [...seq.items]) {
+    if (!row || !row.get || row.has && row.has('insert')) continue;
+    if (row.get('id') === 'skill-filesystem') {
+      const i = seq.items.indexOf(row);
+      if (i >= 0) seq.items.splice(i, 1);
+    }
+  }
+  if (dirs.length) {
+    seq.items.push(doc.createNode({ id: 'skill-filesystem', config: { customSkillDirs: dirs } }));
+  }
+  atomicWriteText(patch.path, String(doc));
+}
+
+// settings.yaml（命名空间分节；dsh-settings-file 热发布外部修改）
+function readSettingsDoc() {
+  const p = managerPaths().settingsYaml;
+  let raw;
+  if (fs.existsSync(p)) raw = fs.readFileSync(p, 'utf8');
+  else raw = '{}\n';
+  const Y = loadYamlLib();
+  if (!Y) return null;
+  const doc = Y.parseDocument(raw);
+  if (doc.errors && doc.errors.length) return null;
+  return { Y, doc, path: p };
+}
+
+function getDefaultPresetId() {
+  const s = readSettingsDoc();
+  if (!s) return null;
+  try {
+    const js = s.doc.toJS ? s.doc.toJS() : null;
+    const v = js && js['agent-presets'] && js['agent-presets'].default;
+    return v === undefined || v === null ? null : String(v);
+  } catch { return null; }
+}
+
+function setDefaultPresetId(id) {
+  const s = readSettingsDoc();
+  if (!s) throw new Error('无法解析 settings.yaml');
+  if (id === null || id === '') {
+    s.doc.deleteIn(['agent-presets', 'default']);
+    const section = s.doc.get('agent-presets');
+    const count = section && section.items
+      ? (typeof section.items.size === 'number' ? section.items.size : Object.keys(section.items).length)
+      : 0;
+    if (count === 0) s.doc.delete('agent-presets');
+  } else {
+    s.doc.setIn(['agent-presets', 'default'], String(id));
+  }
+  atomicWriteText(s.path, String(s.doc));
+}
+
+// dsh 预设发现规则（dsh-agent-presets scanRoot）：小写字母/数字开头，仅小写字母、数字、-
+const PRESET_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function readPresetMeta(presetDir, id) {
+  const yml = path.join(presetDir, 'preset.yml');
+  try {
+    const Y = loadYamlLib();
+    const doc = Y ? Y.parseDocument(fs.readFileSync(yml, 'utf8')) : null;
+    const js = doc && !(doc.errors && doc.errors.length) && typeof doc.toJS === 'function' ? doc.toJS() : null;
+    return {
+      id,
+      name: js && js.name ? String(js.name) : id,
+      description: js && js.description ? String(js.description) : '',
+      order: js && Number.isFinite(js.order) ? js.order : 99,
+    };
+  } catch { return { id, name: id, description: '', order: 99 }; }
+}
+
+function listPresets() {
+  const { userPresetDir, shippedPresetDir } = managerPaths();
+  const byId = new Map();
+  try {
+    for (const d of fs.readdirSync(shippedPresetDir, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      byId.set(d.name, { ...readPresetMeta(shippedPresetDir + path.sep + d.name, d.name), source: 'shipped' });
+    }
+  } catch {}
+  try {
+    for (const d of fs.readdirSync(userPresetDir, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      byId.set(d.name, { ...readPresetMeta(userPresetDir + path.sep + d.name, d.name), source: 'user' });
+    }
+  } catch {}
+  const def = getDefaultPresetId();
+  return [...byId.values()]
+    .sort((a, b) => (a.order - b.order) || a.id.localeCompare(b.id))
+    .map((p) => ({ ...p, isDefault: p.id === def }));
+}
+
+function createPreset(id, name, description) {
+  if (!PRESET_ID_PATTERN.test(id)) throw new Error('预设 id 须以小写字母或数字开头，仅含小写字母、数字、-（1-64 字符）');
+  const { userPresetDir, shippedPresetDir } = managerPaths();
+  const dst = path.join(userPresetDir, id);
+  if (fs.existsSync(dst)) throw new Error(`预设 "${id}" 已存在`);
+  fs.mkdirSync(dst, { recursive: true });
+  // 模板：复制官方 standard 预设的 agent.cordis.yml（完整编码 Agent）；缺失时用最小模板
+  const stdAgent = path.join(shippedPresetDir, 'standard', 'agent.cordis.yml');
+  const agentCordis = fs.existsSync(stdAgent)
+    ? fs.readFileSync(stdAgent, 'utf8')
+    : [
+        '# Minimal agent preset created by the DeepSeek Harness manager.',
+        '# Rows are agent-plane; the roster mounts them inside an isolate realm.',
+        '- id: persona',
+        "  name: '@deepseek-ai/dsh-persona'",
+        '  config:',
+        '    text: >-',
+        '      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.',
+        '',
+      ].join('\n');
+  fs.writeFileSync(path.join(dst, 'agent.cordis.yml'), agentCordis, 'utf8');
+  const Y = loadYamlLib();
+  const meta = { name: name || id, description: description || '', order: 99 };
+  fs.writeFileSync(path.join(dst, 'preset.yml'), Y ? Y.stringify(meta) : `name: ${meta.name}\ndescription: ${meta.description}\norder: 99\n`, 'utf8');
+  return { id, ...meta };
+}
+
+function deletePreset(id) {
+  if (!PRESET_ID_PATTERN.test(id)) throw new Error('非法的预设 id');
+  const dst = path.join(managerPaths().userPresetDir, id);
+  if (!fs.existsSync(dst)) throw new Error(`用户预设 "${id}" 不存在`);
+  fs.rmSync(dst, { recursive: true, force: true });
+  if (getDefaultPresetId() === id) setDefaultPresetId(null);
+}
+
+function listSkillsIn(dir) {
+  const out = [];
+  try {
+    for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (d.isDirectory() && fs.existsSync(path.join(dir, d.name, 'SKILL.md'))) out.push({ name: d.name, kind: 'dir' });
+      else if (d.isFile() && d.name.toLowerCase().endsWith('.md')) out.push({ name: d.name.replace(/\.md$/i, ''), kind: 'file' });
+    }
+  } catch {}
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function managerState() {
+  const p = managerPaths();
+  const mcp = readMcpServers();
+  const skills = readCustomSkillDirs();
+  return {
+    profile: { dir: p.profileDir, patchPath: p.profilePatch, patchExists: fs.existsSync(p.profilePatch) },
+    mcp,
+    skills: {
+      ...skills,
+      userDir: p.userSkillDir,
+      bundledDir: p.bundledSkillDir,
+      userSkills: listSkillsIn(p.userSkillDir),
+      bundledSkills: listSkillsIn(p.bundledSkillDir),
+    },
+    agents: { presets: listPresets(), defaultId: getDefaultPresetId(), userDir: p.userPresetDir, shippedDir: p.shippedPresetDir },
+    service: { owned: !!dshProcess, port: PORT },
+  };
+}
+
+function openManagerWindow() {
+  if (managerWindow && !managerWindow.isDestroyed()) {
+    managerWindow.show();
+    managerWindow.focus();
+    return;
+  }
+  managerWindow = new BrowserWindow({
+    width: 1000,
+    height: 720,
+    minWidth: 780,
+    minHeight: 540,
+    title: 'DeepSeek Harness · 管理',
+    backgroundColor: '#101014',
+    icon: path.join(__dirname, 'icon.png'),
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+  managerWindow.loadFile(path.join(__dirname, 'manager.html'));
+  managerWindow.on('closed', () => {
+    managerWindow = null;
+  });
+}
+
+ipcMain.on('dsh-open-manager', () => openManagerWindow());
+
+ipcMain.handle('manager-invoke', async (_e, op, payload) => {
+  const out = (extra) => ({ ok: true, ...extra });
+  try {
+    switch (op) {
+      case 'state': return out(managerState());
+      case 'mcp-save': writeMcpServers(payload && payload.servers); return out(managerState());
+      case 'skill-dirs-save': writeCustomSkillDirs(payload && payload.dirs); return out(managerState());
+      case 'preset-create': createPreset(payload.id, payload.name, payload.description); return out(managerState());
+      case 'preset-delete': deletePreset(payload.id); return out(managerState());
+      case 'preset-default': setDefaultPresetId(payload && payload.id != null ? payload.id : null); return out(managerState());
+      case 'open-path':
+        if (payload && payload.path) await shell.openPath(String(payload.path));
+        return out({});
+      case 'choose-dir': {
+        const win = managerWindow && !managerWindow.isDestroyed() ? managerWindow : mainWindow;
+        const result = await dialog.showOpenDialog(win, {
+          title: '选择目录',
+          properties: ['openDirectory', 'createDirectory'],
+        });
+        return out({ path: result.canceled || !result.filePaths.length ? null : result.filePaths[0] });
+      }
+      case 'restart-service': {
+        if (!dshProcess) return { ok: true, restarted: false, reason: 'external', ...managerState() };
+        stopDshServer();
+        const healed = await startDshWithSelfHeal();
+        if (!healed) throw new Error('dsh 服务重启失败：进程退出或插件树加载失败（见 dsh-server.log）');
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+        return out({ restarted: true, healed, ...managerState() });
+      }
+      default: throw new Error(`未知操作：${op}`);
+    }
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
 });
 
 // ===== TUI 窗口（Web 风格聊天 GUI，常驻 owntui 后端走 JSON 行协议）=====

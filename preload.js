@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   checkUpdate: () => ipcRenderer.send('dsh-check-update'),
   openTui: () => ipcRenderer.send('dsh-open-tui'),
   restartUpdate: () => ipcRenderer.send('dsh-restart-update'),
+  openManager: () => ipcRenderer.send('dsh-open-manager'),
+  managerInvoke: (op, payload) => ipcRenderer.invoke('manager-invoke', op, payload),
 });
 
 contextBridge.exposeInMainWorld('dshGui', {

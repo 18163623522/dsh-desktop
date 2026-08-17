@@ -2,9 +2,19 @@
   "name": "dsh-app-deps",
   "private": true,
   "scripts": {
-    "postinstall": "node ../scripts/apply-patches.js"
+    "postinstall": "node ../scripts/apply-patches.js && node ../scripts/vendor-bundled-plugins.js"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "^0.1.0-rc.6"
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "dsh-better-sidebar": "0.12.3",
+    "dshmarket": "1.11.0",
+    "dsh-mnemon": "0.2.0",
+    "@zseven-w/dsh-openpencil": "0.1.0-rc.1",
+    "@anionex/dsh-vision-toolkit": "0.1.24",
+    "@liustack/modlens": "3.18.1",
+    "@yejiming/dsh-data-agent": "0.0.9",
+    "@nanmicoder/dsh-auto-mode": "0.1.4",
+    "@nanmicoder/dsh-agent-teams": "0.1.6",
+    "deepseek-flow": "0.3.21"
   }
 }

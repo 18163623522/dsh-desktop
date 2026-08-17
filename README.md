@@ -49,7 +49,24 @@ export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-
 
 - 单实例锁；若 3080 端口已有 dsh 服务在跑会直接复用
 - 内置 skill：随包分发 `bundled-skills/` 目录（当前内置 J-Space 认知套件），启动时通过 `DSH_BUNDLED_SKILL_DIR` 环境变量挂载，由 dsh 的 skill-filesystem 插件以 `bundled` 源（rank 600，最低优先级）加载；用户/项目自装同名 skill 可覆盖内置版本
-- 内置插件：随包分发 `bundled-plugins/dsh-goal-mode/`（「目标模式」——制定计划 → 批准 → 自动执行到完成），启动时由 `ensureGoalModePlugin()` 自动挂载到 profile 的 `dsh.profile.bundles`；用户在已装该插件的 profile 上覆盖同名挂载时，以用户版本为准
+- 内置插件：随包分发 12 个社区插件（作为 `app-deps` 依赖打进 `resources/node_modules`，dsh 的 bundle 解析为「安装目录优先」），启动时由 `ensureBundledPlugins()` 幂等地挂到 profile 的 `dsh.profile.bundles`。挂载是每个插件一次性的决定（记录于 manifest 的 `dsh.desktop.bundledPlugins`）：用户或冲突自愈移除后不再强制加回；同名插件以随包版本为准：
+
+  | 插件 | 说明 |
+  |------|------|
+  | `dsh-goal-mode` | 目标模式（内置）：制定计划 → 批准 → 自动执行到完成 |
+  | `dshmarket` | 插件市场 |
+  | `dsh-better-sidebar` | 侧边栏增强（CodeMirror 编辑器等） |
+  | `dsh-at-file` | `@路径` 文件引用 |
+  | `@anionex/dsh-vision-toolkit` | 视觉工具包 |
+  | `dsh-mnemon` | 记忆插件 |
+  | `@yejiming/dsh-data-agent` | 数据代理（共享数据库连接 + SQL 工具） |
+  | `@zseven-w/dsh-openpencil` | 画布 |
+  | `@liustack/modlens` | 模型透镜 |
+  | `@nanmicoder/dsh-auto-mode` | 自动权限模式 |
+  | `@nanmicoder/dsh-agent-teams` | 多代理协作 |
+  | `deepseek-flow` | 深度求索工作流 |
+
+- 管理窗口：右下角悬浮「⚙ 管理」按钮打开独立管理窗口，集中管理 **MCP 服务器**（写入 profile `cordis.patch.yml` 的 `mcp-client` 行，dsh 热加载）、**Skill 自定义目录**（`skill-filesystem` 的 `customSkillDirs`，热加载）与 **Agent 预设**（`~/.dsh/.agent-presets` 增删 + `settings.yaml` 默认预设）
 - 退出时按进程树终止 dsh 及其派生进程（Windows `taskkill /T /F`）
 - dsh 服务日志：`%APPDATA%\DeepSeek Harness\dsh-server.log`
 - 便携版按「应用名+版本号」缓存临时解压目录，改版本号可强制重新解压
